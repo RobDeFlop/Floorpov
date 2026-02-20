@@ -8,14 +8,14 @@ Floorpov is a Tauri 2 desktop application with a React 19 + TypeScript frontend 
 
 ```bash
 # Frontend only
-npm run dev          # Start Vite dev server on port 1420
-npm run build        # TypeScript compile + Vite production build
-npm run preview      # Preview production build
+bun run dev          # Start Vite dev server on port 1420
+bun run build        # TypeScript compile + Vite production build
+bun run preview      # Preview production build
 
 # Full Tauri app (frontend + backend)
-npm run tauri dev        # Run Tauri in development mode
-npm run tauri build      # Build production Tauri app
-npm run tauri build -- --debug  # Build with debug symbols
+bun run tauri dev        # Run Tauri in development mode
+bun run tauri build      # Build production Tauri app
+bun run tauri build -- --debug  # Build with debug symbols
 ```
 
 ### Running a Single Test
@@ -24,7 +24,7 @@ npm run tauri build -- --debug  # Build with debug symbols
 
 ```bash
 # Install Vitest for unit tests
-npm install -D vitest @testing-library/react @testing-library/jest-dom jsdom
+bun add -D vitest @testing-library/react @testing-library/jest-dom jsdom
 
 # Add to package.json scripts:
 # "test": "vitest",
@@ -51,8 +51,8 @@ cargo test --lib        # Run library tests only
 
 ```bash
 # TypeScript type checking (part of build)
-npx tsc --noEmit        # Type check without emitting
-npx tsc --noEmit --watch # Watch mode
+bunx tsc --noEmit        # Type check without emitting
+bunx tsc --noEmit --watch # Watch mode
 
 # Rust
 cd src-tauri
@@ -96,10 +96,22 @@ cargo fmt              # Auto-format
 
 **React Patterns:**
 
+- Never use class components - always use functional components with hooks
+- Use async/await syntax for async operations
 - Use functional components with hooks
 - Destructure props: `function App({ title }: AppProps)`
 - Use early returns for conditionals
 - Avoid inline object styles, use CSS modules or classes
+
+**Tailwind CSS:**
+
+- Use utility classes instead of custom CSS
+- Keep components small and focused to avoid deeply nested utility classes
+- Use `@apply` directive sparingly - only for reusable patterns in CSS
+- Extract repeated utility combinations into reusable components
+- Use Tailwind's responsive prefixes (`sm:`, `md:`, `lg:`) for mobile-first design
+- Use arbitrary values for one-off styles (e.g., `w-[300px]`) when needed
+- Prefer semantic class names that describe content, not appearance when possible
 
 **Error Handling:**
 
@@ -120,7 +132,13 @@ cargo fmt              # Auto-format
 - Functions/variables: snake_case
 - Structs/Enums: PascalCase
 - Traits: PascalCase (often with -able suffix)
-- Constants: UPPER_SNAKE_CASE
+- Constants: SCREAMING_SNAKE_CASE
+
+**Async:**
+
+- Prefer tokio primitives (e.g., `tokio::sync::RwLock`, `tokio::spawn`)
+- Avoid blocking operations - use `tokio::fs` not `std::fs`
+- Use `tokio::task::spawn_blocking` for CPU-intensive work
 
 **Code Organization:**
 
@@ -241,9 +259,33 @@ import { MyComponent } from "./components/MyComponent";
 - No section dividers (e.g., "// ====", "// ---")
 - Remove comments when code is removed during refactors
 - If code needs a comment to be understood, refactor instead
+- Never use placeholder comments ("for now", "TODO: extract this later")
+- Never use markdown formatting (**bold**, _italic_) in code comments
+- Never use ASCII diagrams (put those in /docs/ if needed)
+- Never use comments explaining removed code during refactors
 
 ### General
 
 - No speculative dead code
 - No placeholder metadata
 - No AI-filler patterns
+
+### Writing Style
+
+This applies to all documentation, code comments, and design documents.
+
+Use clear, simple language. Write short, impactful sentences. Use active voice. Focus on practical, actionable information.
+
+Address the reader directly with "you" and "your". Support claims with data and examples when possible.
+
+**Avoid these constructions:**
+
+- Em dashes (use commas or periods)
+- "Not only this, but also this"
+- Metaphors and cliches
+- Generalizations
+- Setup language like "in conclusion"
+- Unnecessary adjectives and adverbs
+- Emojis, hashtags, markdown formatting in prose
+
+**Avoid these words:** comprehensive, delve, utilize, harness, realm, tapestry, unlock, revolutionary, groundbreaking, remarkable, pivotal
