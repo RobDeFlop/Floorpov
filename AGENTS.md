@@ -261,7 +261,6 @@ import { MyComponent } from "./components/MyComponent";
 - If code needs a comment to be understood, refactor instead
 - Never use placeholder comments ("for now", "TODO: extract this later")
 - Never use markdown formatting (**bold**, _italic_) in code comments
-- Never use ASCII diagrams (put those in /docs/ if needed)
 - Never use comments explaining removed code during refactors
 
 ### General

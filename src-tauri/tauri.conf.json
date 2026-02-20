@@ -9,12 +9,18 @@
     "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist"
   },
-  "app": {
+"app": {
     "windows": [
       {
         "title": "floorpov",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "decorations": false,
+        "transparent": false,
+        "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "closable": true
       }
     ],
     "security": {
