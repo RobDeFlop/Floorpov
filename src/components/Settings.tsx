@@ -9,6 +9,7 @@ import {
   Keyboard,
   Mic,
   Monitor,
+  RotateCw,
   Settings2,
   Video,
   Volume2,
@@ -22,6 +23,12 @@ interface SettingsProps {
   onBack: () => void;
 }
 
+interface WindowOption {
+  id: string;
+  title: string;
+  processName?: string;
+}
+
 export function Settings({ onBack }: SettingsProps) {
   const { settings, updateSettings } = useSettings();
   const { isRecording } = useRecording();
@@ -29,6 +36,9 @@ export function Settings({ onBack }: SettingsProps) {
   const [folderSize, setFolderSize] = useState<number>(0);
   const [isWowFolderValid, setIsWowFolderValid] = useState<boolean>(false);
   const [hasChanges, setHasChanges] = useState(false);
+  const [availableWindows, setAvailableWindows] = useState<WindowOption[]>([]);
+  const [isLoadingWindows, setIsLoadingWindows] = useState(false);
+  const [windowsError, setWindowsError] = useState<string | null>(null);
 
   useEffect(() => {
     setFormData(settings);
@@ -78,6 +88,86 @@ export function Settings({ onBack }: SettingsProps) {
     setHasChanges(JSON.stringify(formData) !== JSON.stringify(settings));
   }, [formData, settings]);
 
+  useEffect(() => {
+    if (formData.captureSource === "window") {
+      void loadWindows();
+    } else {
+      setWindowsError(null);
+    }
+  }, [formData.captureSource]);
+
+  useEffect(() => {
+    if (formData.captureSource !== "window") {
+      return;
+    }
+
+    if (availableWindows.length === 0) {
+      return;
+    }
+
+    if (!formData.selectedWindow) {
+      setFormData((previous) => ({ ...previous, selectedWindow: availableWindows[0].id }));
+      return;
+    }
+
+    const hasMatchingId = availableWindows.some((windowOption) => {
+      return windowOption.id === formData.selectedWindow;
+    });
+
+    if (hasMatchingId) {
+      return;
+    }
+
+    const matchByTitle = availableWindows.find((windowOption) => {
+      return windowOption.title === formData.selectedWindow;
+    });
+
+    if (matchByTitle) {
+      setFormData((previous) => ({ ...previous, selectedWindow: matchByTitle.id }));
+      return;
+    }
+
+    setFormData((previous) => ({ ...previous, selectedWindow: availableWindows[0].id }));
+  }, [availableWindows, formData.captureSource, formData.selectedWindow]);
+
+  const getErrorMessage = (error: unknown): string => {
+    if (typeof error === "string") {
+      return error;
+    }
+
+    if (error && typeof error === "object") {
+      const maybeMessage = (error as { message?: unknown }).message;
+      if (typeof maybeMessage === "string") {
+        return maybeMessage;
+      }
+
+      const maybeError = (error as { error?: unknown }).error;
+      if (typeof maybeError === "string") {
+        return maybeError;
+      }
+    }
+
+    return "Failed to load available windows.";
+  };
+
+  const loadWindows = async () => {
+    setIsLoadingWindows(true);
+    setWindowsError(null);
+    try {
+      const windows = await invoke<WindowOption[]>("list_windows");
+      setAvailableWindows(windows);
+      if (windows.length === 0) {
+        setWindowsError("No capturable windows found. Open a window and refresh.");
+      }
+    } catch (error) {
+      setAvailableWindows([]);
+      setWindowsError(getErrorMessage(error));
+      console.error("Failed to list windows:", error);
+    } finally {
+      setIsLoadingWindows(false);
+    }
+  };
+
   const loadFolderSize = async () => {
     try {
       const size = await invoke<number>('get_folder_size', { 
@@ -111,6 +201,10 @@ export function Settings({ onBack }: SettingsProps) {
     }
     
     if (formData.maxStorageGB > MAX_STORAGE_GB) {
+      return;
+    }
+
+    if (formData.captureSource === "window" && !formData.selectedWindow) {
       return;
     }
 
@@ -303,13 +397,60 @@ export function Settings({ onBack }: SettingsProps) {
                 <label className="mb-2 block text-sm text-neutral-300">Capture Source</label>
                 <select
                   value={formData.captureSource}
-                  onChange={(e) => setFormData({ ...formData, captureSource: e.target.value as any })}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      captureSource: e.target.value as RecordingSettings["captureSource"],
+                    })
+                  }
                   className={fieldClassName}
                 >
                   <option value="primary-monitor">Primary Monitor</option>
-                  <option value="window" disabled>Specific Window (Coming Soon)</option>
+                  <option value="window">Specific Window</option>
                 </select>
               </div>
+
+              {formData.captureSource === "window" && (
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <label className="block text-sm text-neutral-300">Window</label>
+                    <button
+                      type="button"
+                      onClick={loadWindows}
+                      disabled={isLoadingWindows}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-emerald-300/20 bg-black/20 px-2.5 py-1 text-xs text-neutral-200 transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <RotateCw className={`h-3.5 w-3.5 ${isLoadingWindows ? "animate-spin" : ""}`} />
+                      Refresh
+                    </button>
+                  </div>
+                  <select
+                    value={formData.selectedWindow || ""}
+                    onChange={(e) => setFormData({ ...formData, selectedWindow: e.target.value })}
+                    className={fieldClassName}
+                    disabled={availableWindows.length === 0 || isLoadingWindows}
+                  >
+                    <option value="" disabled>
+                      {isLoadingWindows ? "Loading windows..." : "Select a window"}
+                    </option>
+                    {availableWindows.map((windowOption) => (
+                      <option key={windowOption.id} value={windowOption.id}>
+                        {windowOption.processName
+                          ? `${windowOption.title} (${windowOption.processName})`
+                          : windowOption.title}
+                      </option>
+                    ))}
+                  </select>
+                  {windowsError && (
+                    <p className="mt-1 text-xs text-rose-300">{windowsError}</p>
+                  )}
+                  {!windowsError && availableWindows.length > 0 && (
+                    <p className="mt-1 text-xs text-neutral-500">
+                      Pick the app window to preview and record.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </section>
 

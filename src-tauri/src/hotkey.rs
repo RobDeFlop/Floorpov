@@ -13,7 +13,7 @@ pub async fn register_marker_hotkey(app_handle: AppHandle, hotkey: String) -> Re
     }
 
     let mut current = CURRENT_HOTKEY.lock().map_err(|e| e.to_string())?;
-    
+
     if let Some(old_hotkey) = current.as_ref() {
         let _ = app_handle.global_shortcut().unregister(old_hotkey.as_str());
     }

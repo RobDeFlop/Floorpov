@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use base64::Engine;
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, RwLock};
 use windows_capture::{
@@ -9,10 +9,10 @@ use windows_capture::{
     graphics_capture_api::InternalCaptureControl,
     monitor::Monitor,
     settings::{
-        ColorFormat, CursorCaptureSettings, DrawBorderSettings, 
-        DirtyRegionSettings, MinimumUpdateIntervalSettings, 
-        SecondaryWindowSettings, Settings
+        ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
+        MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
     },
+    window::Window,
 };
 
 #[derive(Clone, serde::Serialize)]
@@ -41,11 +41,8 @@ impl GraphicsCaptureApiHandler for PreviewCaptureHandler {
     type Error = Box<dyn std::error::Error + Send + Sync>;
 
     fn new(context: Context<Self::Flags>) -> Result<Self, Self::Error> {
-        let encoder = ImageEncoder::new(
-            ImageFormat::Jpeg, 
-            ImageEncoderPixelFormat::Bgra8
-        )?;
-        Ok(Self { 
+        let encoder = ImageEncoder::new(ImageFormat::Jpeg, ImageEncoderPixelFormat::Bgra8)?;
+        Ok(Self {
             app_handle: context.flags.0,
             encoder,
             buffer: Vec::new(),
@@ -98,7 +95,7 @@ pub struct CaptureState {
 
 impl CaptureState {
     pub fn new() -> Self {
-        Self { 
+        Self {
             is_capturing: false,
             stop_tx: None,
         }
@@ -106,6 +103,137 @@ impl CaptureState {
 }
 
 pub type SharedCaptureState = Arc<RwLock<CaptureState>>;
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowOptionPayload {
+    id: String,
+    title: String,
+    process_name: Option<String>,
+}
+
+enum CaptureTarget {
+    Monitor(Monitor),
+    Window(Window),
+}
+
+fn window_id(window: &Window) -> String {
+    format!("hwnd:{}", window.as_raw_hwnd() as usize)
+}
+
+fn find_window_by_selection(selection: &str) -> Result<Window, String> {
+    let windows = Window::enumerate().map_err(|error| error.to_string())?;
+
+    if let Some(window) = windows
+        .iter()
+        .copied()
+        .find(|window| window_id(window) == selection)
+    {
+        return Ok(window);
+    }
+
+    if let Some(window) = windows.iter().copied().find(|window| {
+        window
+            .title()
+            .map(|title| title.trim() == selection)
+            .unwrap_or(false)
+    }) {
+        return Ok(window);
+    }
+
+    Window::from_contains_name(selection).map_err(|_| {
+        format!("Could not find window '{selection}'. Refresh the window list and try again.")
+    })
+}
+
+fn resolve_capture_target(
+    capture_source: &str,
+    selected_window: Option<&str>,
+) -> Result<(CaptureTarget, u32, u32, String), String> {
+    match capture_source {
+        "primary-monitor" => {
+            let monitor = Monitor::primary().map_err(|error| error.to_string())?;
+            let width = monitor.width().map_err(|error| error.to_string())?;
+            let height = monitor.height().map_err(|error| error.to_string())?;
+
+            Ok((
+                CaptureTarget::Monitor(monitor),
+                width,
+                height,
+                "Primary Monitor".to_string(),
+            ))
+        }
+        "window" => {
+            let selected_value = selected_window
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or("Select a window before starting preview".to_string())?;
+
+            let window = find_window_by_selection(selected_value)?;
+
+            let window_name = window
+                .title()
+                .unwrap_or_else(|_| selected_value.to_string());
+
+            if !window.is_valid() {
+                return Err(format!(
+                    "Window '{window_name}' is not capturable right now. Try a different window."
+                ));
+            }
+
+            let width = window.width().map_err(|error| error.to_string())?;
+            let height = window.height().map_err(|error| error.to_string())?;
+
+            if width <= 0 || height <= 0 {
+                return Err(format!(
+                    "Window '{window_name}' has an invalid size and cannot be captured."
+                ));
+            }
+
+            Ok((
+                CaptureTarget::Window(window),
+                width as u32,
+                height as u32,
+                format!("Window: {window_name}"),
+            ))
+        }
+        _ => Err(format!("Unsupported capture source: {capture_source}")),
+    }
+}
+
+fn list_capturable_windows_internal() -> Result<Vec<WindowOptionPayload>, String> {
+    let windows = Window::enumerate().map_err(|error| error.to_string())?;
+
+    let mut window_options: Vec<WindowOptionPayload> = windows
+        .into_iter()
+        .filter_map(|window| {
+            if !window.is_valid() {
+                return None;
+            }
+
+            match window.title() {
+                Ok(title) => {
+                    let trimmed = title.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(WindowOptionPayload {
+                            id: window_id(&window),
+                            title: trimmed.to_string(),
+                            process_name: window.process_name().ok(),
+                        })
+                    }
+                }
+                Err(_) => None,
+            }
+        })
+        .collect();
+
+    window_options.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    window_options.dedup_by(|a, b| a.id == b.id);
+
+    Ok(window_options)
+}
 
 #[tauri::command]
 pub async fn start_preview(
@@ -120,23 +248,8 @@ pub async fn start_preview(
         return Err("Capture already in progress".to_string());
     }
 
-    let (monitor, source_label) = match capture_source.as_str() {
-        "primary-monitor" => (
-            Monitor::primary().map_err(|e| e.to_string())?,
-            "Primary Monitor".to_string(),
-        ),
-        "window" => {
-            let window_name = selected_window.unwrap_or_else(|| "selected window".to_string());
-            return Err(format!(
-                "Window capture is not implemented yet (requested: {}). Use Primary Monitor.",
-                window_name
-            ));
-        }
-        _ => return Err(format!("Unsupported capture source: {}", capture_source)),
-    };
-
-    let width = monitor.width().map_err(|e| e.to_string())?;
-    let height = monitor.height().map_err(|e| e.to_string())?;
+    let (capture_target, width, height, source_label) =
+        resolve_capture_target(capture_source.as_str(), selected_window.as_deref())?;
 
     // Create channel for stop signal
     let (stop_tx, stop_rx) = mpsc::channel(1);
@@ -144,29 +257,57 @@ pub async fn start_preview(
     capture_state.is_capturing = true;
     capture_state.stop_tx = Some(stop_tx);
 
-    let settings = Settings::new(
-        monitor,
-        CursorCaptureSettings::Default,
-        DrawBorderSettings::WithoutBorder,
-        SecondaryWindowSettings::Default,
-        MinimumUpdateIntervalSettings::Default,
-        DirtyRegionSettings::Default,
-        ColorFormat::Bgra8,
-        (app_handle.clone(), stop_rx, state.inner().clone()),
-    );
-
     let shared_state = state.inner().clone();
+    let app_handle_for_task = app_handle.clone();
 
-    tokio::spawn(async move {
-        if let Err(e) = PreviewCaptureHandler::start(settings) {
-            eprintln!("Capture error: {}", e);
-            if let Ok(mut capture_state) = shared_state.try_write() {
-                capture_state.is_capturing = false;
-                capture_state.stop_tx = None;
-            }
-            let _ = app_handle.emit("capture-stopped", ());
+    match capture_target {
+        CaptureTarget::Monitor(monitor) => {
+            let settings = Settings::new(
+                monitor,
+                CursorCaptureSettings::Default,
+                DrawBorderSettings::WithoutBorder,
+                SecondaryWindowSettings::Default,
+                MinimumUpdateIntervalSettings::Default,
+                DirtyRegionSettings::Default,
+                ColorFormat::Bgra8,
+                (app_handle.clone(), stop_rx, state.inner().clone()),
+            );
+
+            tokio::spawn(async move {
+                if let Err(e) = PreviewCaptureHandler::start(settings) {
+                    tracing::error!("Capture error: {e}");
+                    if let Ok(mut capture_state) = shared_state.try_write() {
+                        capture_state.is_capturing = false;
+                        capture_state.stop_tx = None;
+                    }
+                    let _ = app_handle_for_task.emit("capture-stopped", ());
+                }
+            });
         }
-    });
+        CaptureTarget::Window(window) => {
+            let settings = Settings::new(
+                window,
+                CursorCaptureSettings::Default,
+                DrawBorderSettings::WithoutBorder,
+                SecondaryWindowSettings::Default,
+                MinimumUpdateIntervalSettings::Default,
+                DirtyRegionSettings::Default,
+                ColorFormat::Bgra8,
+                (app_handle.clone(), stop_rx, state.inner().clone()),
+            );
+
+            tokio::spawn(async move {
+                if let Err(e) = PreviewCaptureHandler::start(settings) {
+                    tracing::error!("Capture error: {e}");
+                    if let Ok(mut capture_state) = shared_state.try_write() {
+                        capture_state.is_capturing = false;
+                        capture_state.stop_tx = None;
+                    }
+                    let _ = app_handle_for_task.emit("capture-stopped", ());
+                }
+            });
+        }
+    }
 
     Ok(CaptureStartedPayload {
         width,
@@ -176,11 +317,9 @@ pub async fn start_preview(
 }
 
 #[tauri::command]
-pub async fn stop_preview(
-    state: tauri::State<'_, SharedCaptureState>,
-) -> Result<(), String> {
+pub async fn stop_preview(state: tauri::State<'_, SharedCaptureState>) -> Result<(), String> {
     let mut capture_state = state.write().await;
-    
+
     if !capture_state.is_capturing {
         return Err("No active capture to stop".to_string());
     }
@@ -196,6 +335,6 @@ pub async fn stop_preview(
 }
 
 #[tauri::command]
-pub async fn list_windows() -> Result<Vec<String>, String> {
-    Ok(vec!["Primary Monitor".to_string()])
+pub async fn list_windows() -> Result<Vec<WindowOptionPayload>, String> {
+    list_capturable_windows_internal()
 }

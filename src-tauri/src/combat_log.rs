@@ -174,7 +174,8 @@ pub fn parse_combat_log_file(file_path: String) -> Result<ParseCombatLogDebugRes
         let line = line_result.map_err(|error| error.to_string())?;
         total_lines += 1;
 
-        if let Some(parsed_event) = parse_important_log_line(&line, total_lines, &mut debug_context) {
+        if let Some(parsed_event) = parse_important_log_line(&line, total_lines, &mut debug_context)
+        {
             *event_counts
                 .entry(parsed_event.event_type.clone())
                 .or_insert(0) += 1;
@@ -352,7 +353,8 @@ fn parse_important_log_line(
             encounter_name = Some(finished_encounter_name);
         }
         if encounter_category.is_none() {
-            encounter_category = Some(classify_encounter_category(context, &parsed_line.fields).to_string());
+            encounter_category =
+                Some(classify_encounter_category(context, &parsed_line.fields).to_string());
         }
         context.current_encounter = None;
         context.current_encounter_category = None;
@@ -405,7 +407,9 @@ fn parse_log_line_fields(line: &str) -> Option<ParsedLogLine> {
     let header = fields.next()?.trim();
     let raw_event_type = extract_event_type(header)?;
     let normalized_event_type = normalize_important_event_type(raw_event_type)?;
-    let remaining_fields = fields.map(|value| value.trim().to_string()).collect::<Vec<String>>();
+    let remaining_fields = fields
+        .map(|value| value.trim().to_string())
+        .collect::<Vec<String>>();
 
     let source_name = remaining_fields.get(1).map(|value| value.as_str());
     let source_guid = remaining_fields.first().map(|value| value.as_str());
@@ -435,8 +439,12 @@ fn normalize_important_event_type(event_type: &str) -> Option<&'static str> {
         "SPELL_DISPEL" => Some("SPELL_DISPEL"),
         "ENCOUNTER_START" => Some("ENCOUNTER_START"),
         "ENCOUNTER_END" => Some("ENCOUNTER_END"),
-        "ZONE_CHANGE" | "ZONE_CHANGE_NEW_AREA" | "ZONE_CHANGED" | "ZONE_CHANGED_INDOORS"
-        | "PLAYER_ENTERING_WORLD" | "MAP_CHANGE" => Some("ZONE_CONTEXT"),
+        "ZONE_CHANGE"
+        | "ZONE_CHANGE_NEW_AREA"
+        | "ZONE_CHANGED"
+        | "ZONE_CHANGED_INDOORS"
+        | "PLAYER_ENTERING_WORLD"
+        | "MAP_CHANGE" => Some("ZONE_CONTEXT"),
         "CHALLENGE_MODE_START" | "CHALLENGE_MODE_END" => Some("CHALLENGE_CONTEXT"),
         "ARENA_MATCH_START" | "ARENA_MATCH_END" | "PVP_MATCH_START" | "PVP_MATCH_COMPLETE"
         | "BATTLEGROUND_START" | "BATTLEGROUND_END" => Some("PVP_CONTEXT"),
@@ -648,7 +656,9 @@ fn looks_like_region_code(value: &str) -> bool {
         return false;
     }
 
-    value.chars().all(|character| character.is_ascii_uppercase())
+    value
+        .chars()
+        .all(|character| character.is_ascii_uppercase())
 }
 
 fn normalize_name(name: Option<&str>) -> Option<String> {

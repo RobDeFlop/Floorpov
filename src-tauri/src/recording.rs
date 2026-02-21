@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, RwLock};
 use windows_capture::{
@@ -11,10 +12,10 @@ use windows_capture::{
     graphics_capture_api::InternalCaptureControl,
     monitor::Monitor,
     settings::{
-        ColorFormat, CursorCaptureSettings, DrawBorderSettings, 
-        DirtyRegionSettings, MinimumUpdateIntervalSettings, 
-        SecondaryWindowSettings, Settings
+        ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
+        MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
     },
+    window::Window,
 };
 
 #[derive(Clone, serde::Serialize)]
@@ -26,9 +27,29 @@ pub struct RecordingStartedPayload {
 
 struct RecordingHandler {
     app_handle: AppHandle,
+    output_path: String,
     encoder: Option<VideoEncoder>,
     stop_rx: mpsc::Receiver<()>,
     state: SharedRecordingState,
+    finalized_emitted: bool,
+}
+
+impl RecordingHandler {
+    fn emit_recording_finalized(&mut self) {
+        if self.finalized_emitted {
+            return;
+        }
+
+        if let Err(error) = self
+            .app_handle
+            .emit("recording-finalized", &self.output_path)
+        {
+            tracing::error!("Failed to emit recording-finalized event: {error}");
+            return;
+        }
+
+        self.finalized_emitted = true;
+    }
 }
 
 impl GraphicsCaptureApiHandler for RecordingHandler {
@@ -63,9 +84,11 @@ impl GraphicsCaptureApiHandler for RecordingHandler {
 
         Ok(Self {
             app_handle,
+            output_path,
             encoder: Some(encoder),
             stop_rx,
             state,
+            finalized_emitted: false,
         })
     }
 
@@ -76,8 +99,11 @@ impl GraphicsCaptureApiHandler for RecordingHandler {
     ) -> Result<(), Self::Error> {
         if self.stop_rx.try_recv().is_ok() {
             if let Some(encoder) = self.encoder.take() {
-                encoder.finish()?;
+                if let Err(error) = encoder.finish() {
+                    tracing::error!("Failed to finalize recording encoder: {error}");
+                }
             }
+            self.emit_recording_finalized();
             capture_control.stop();
             return Ok(());
         }
@@ -90,14 +116,19 @@ impl GraphicsCaptureApiHandler for RecordingHandler {
 
     fn on_closed(&mut self) -> Result<(), Self::Error> {
         if let Some(encoder) = self.encoder.take() {
-            encoder.finish()?;
+            if let Err(error) = encoder.finish() {
+                tracing::error!("Failed to finalize recording encoder on close: {error}");
+            }
         }
+        self.emit_recording_finalized();
         if let Ok(mut recording_state) = self.state.try_write() {
             recording_state.is_recording = false;
             recording_state.current_output_path = None;
             recording_state.stop_tx = None;
         }
-        self.app_handle.emit("recording-stopped", ())?;
+        if let Err(error) = self.app_handle.emit("recording-stopped", ()) {
+            tracing::error!("Failed to emit recording-stopped event: {error}");
+        }
         Ok(())
     }
 }
@@ -120,6 +151,84 @@ impl RecordingState {
 
 pub type SharedRecordingState = Arc<RwLock<RecordingState>>;
 
+enum CaptureTarget {
+    Monitor(Monitor),
+    Window(Window),
+}
+
+fn window_id(window: &Window) -> String {
+    format!("hwnd:{}", window.as_raw_hwnd() as usize)
+}
+
+fn find_window_by_selection(selection: &str) -> Result<Window, String> {
+    let windows = Window::enumerate().map_err(|error| error.to_string())?;
+
+    if let Some(window) = windows
+        .iter()
+        .copied()
+        .find(|window| window_id(window) == selection)
+    {
+        return Ok(window);
+    }
+
+    if let Some(window) = windows.iter().copied().find(|window| {
+        window
+            .title()
+            .map(|title| title.trim() == selection)
+            .unwrap_or(false)
+    }) {
+        return Ok(window);
+    }
+
+    Window::from_contains_name(selection).map_err(|_| {
+        format!("Could not find window '{selection}'. Refresh the window list and try again.")
+    })
+}
+
+fn resolve_capture_target(
+    capture_source: &str,
+    selected_window: Option<&str>,
+) -> Result<(CaptureTarget, u32, u32), String> {
+    match capture_source {
+        "primary-monitor" => {
+            let monitor = Monitor::primary().map_err(|error| error.to_string())?;
+            let width = monitor.width().map_err(|error| error.to_string())?;
+            let height = monitor.height().map_err(|error| error.to_string())?;
+            Ok((CaptureTarget::Monitor(monitor), width, height))
+        }
+        "window" => {
+            let selected_value = selected_window
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or("Select a window before starting recording".to_string())?;
+
+            let window = find_window_by_selection(selected_value)?;
+
+            let window_name = window
+                .title()
+                .unwrap_or_else(|_| selected_value.to_string());
+
+            if !window.is_valid() {
+                return Err(format!(
+                    "Window '{window_name}' is not capturable right now. Try a different window."
+                ));
+            }
+
+            let width = window.width().map_err(|error| error.to_string())?;
+            let height = window.height().map_err(|error| error.to_string())?;
+
+            if width <= 0 || height <= 0 {
+                return Err(format!(
+                    "Window '{window_name}' has an invalid size and cannot be captured."
+                ));
+            }
+
+            Ok((CaptureTarget::Window(window), width as u32, height as u32))
+        }
+        _ => Err(format!("Unsupported capture source: {capture_source}")),
+    }
+}
+
 #[tauri::command]
 pub async fn start_recording(
     app_handle: AppHandle,
@@ -141,14 +250,14 @@ pub async fn start_recording(
 
     let current_size = crate::settings::get_folder_size(output_folder.clone())?;
     let estimated_size = settings.estimate_size_bytes();
-    
+
     if current_size + estimated_size > max_storage_bytes {
         let cleanup_result = crate::settings::cleanup_old_recordings(
             output_folder.clone(),
             max_storage_bytes,
             estimated_size,
         )?;
-        
+
         if cleanup_result.deleted_count > 0 {
             let _ = app_handle.emit("storage-cleanup", cleanup_result);
         }
@@ -159,20 +268,8 @@ pub async fn start_recording(
     let output_path = std::path::Path::new(&output_folder).join(filename);
     let output_path_str = output_path.to_string_lossy().to_string();
 
-    let monitor = match capture_source.as_str() {
-        "primary-monitor" => Monitor::primary().map_err(|e| e.to_string())?,
-        "window" => {
-            let window_name = selected_window.unwrap_or_else(|| "selected window".to_string());
-            return Err(format!(
-                "Window capture is not implemented yet (requested: {}). Use Primary Monitor.",
-                window_name
-            ));
-        }
-        _ => return Err(format!("Unsupported capture source: {}", capture_source)),
-    };
-
-    let width = monitor.width().map_err(|e| e.to_string())?;
-    let height = monitor.height().map_err(|e| e.to_string())?;
+    let (capture_target, width, height) =
+        resolve_capture_target(capture_source.as_str(), selected_window.as_deref())?;
 
     let (stop_tx, stop_rx) = mpsc::channel(1);
 
@@ -180,38 +277,75 @@ pub async fn start_recording(
     recording_state.current_output_path = Some(output_path_str.clone());
     recording_state.stop_tx = Some(stop_tx);
 
-    let capture_settings = Settings::new(
-        monitor,
-        CursorCaptureSettings::Default,
-        DrawBorderSettings::WithoutBorder,
-        SecondaryWindowSettings::Default,
-        MinimumUpdateIntervalSettings::Default,
-        DirtyRegionSettings::Default,
-        ColorFormat::Bgra8,
-        (
-            output_path_str.clone(),
-            width,
-            height,
-            settings,
-            app_handle.clone(),
-            stop_rx,
-            state.inner().clone(),
-        ),
-    );
-
     let shared_state = state.inner().clone();
+    let app_handle_for_task = app_handle.clone();
 
-    tokio::spawn(async move {
-        if let Err(e) = RecordingHandler::start(capture_settings) {
-            eprintln!("Recording error: {}", e);
-            if let Ok(mut recording_state) = shared_state.try_write() {
-                recording_state.is_recording = false;
-                recording_state.current_output_path = None;
-                recording_state.stop_tx = None;
-            }
-            let _ = app_handle.emit("recording-stopped", ());
+    match capture_target {
+        CaptureTarget::Monitor(monitor) => {
+            let capture_settings = Settings::new(
+                monitor,
+                CursorCaptureSettings::Default,
+                DrawBorderSettings::WithoutBorder,
+                SecondaryWindowSettings::Default,
+                MinimumUpdateIntervalSettings::Custom(Duration::from_millis(16)),
+                DirtyRegionSettings::ReportAndRender,
+                ColorFormat::Bgra8,
+                (
+                    output_path_str.clone(),
+                    width,
+                    height,
+                    settings,
+                    app_handle.clone(),
+                    stop_rx,
+                    state.inner().clone(),
+                ),
+            );
+
+            tokio::spawn(async move {
+                if let Err(e) = RecordingHandler::start(capture_settings) {
+                    tracing::error!("Recording error: {e}");
+                    if let Ok(mut recording_state) = shared_state.try_write() {
+                        recording_state.is_recording = false;
+                        recording_state.current_output_path = None;
+                        recording_state.stop_tx = None;
+                    }
+                    let _ = app_handle_for_task.emit("recording-stopped", ());
+                }
+            });
         }
-    });
+        CaptureTarget::Window(window) => {
+            let capture_settings = Settings::new(
+                window,
+                CursorCaptureSettings::Default,
+                DrawBorderSettings::WithoutBorder,
+                SecondaryWindowSettings::Default,
+                MinimumUpdateIntervalSettings::Custom(Duration::from_millis(16)),
+                DirtyRegionSettings::ReportAndRender,
+                ColorFormat::Bgra8,
+                (
+                    output_path_str.clone(),
+                    width,
+                    height,
+                    settings,
+                    app_handle.clone(),
+                    stop_rx,
+                    state.inner().clone(),
+                ),
+            );
+
+            tokio::spawn(async move {
+                if let Err(e) = RecordingHandler::start(capture_settings) {
+                    tracing::error!("Recording error: {e}");
+                    if let Ok(mut recording_state) = shared_state.try_write() {
+                        recording_state.is_recording = false;
+                        recording_state.current_output_path = None;
+                        recording_state.stop_tx = None;
+                    }
+                    let _ = app_handle_for_task.emit("recording-stopped", ());
+                }
+            });
+        }
+    }
 
     Ok(RecordingStartedPayload {
         output_path: output_path_str,
@@ -234,6 +368,8 @@ pub async fn stop_recording(
         .current_output_path
         .clone()
         .ok_or("No output path found")?;
+
+    recording_state.is_recording = false;
 
     if let Some(stop_tx) = recording_state.stop_tx.take() {
         let _ = stop_tx.send(()).await;

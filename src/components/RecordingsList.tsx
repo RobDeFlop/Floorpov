@@ -95,8 +95,13 @@ export function RecordingsList() {
       loadRecordings();
     });
 
+    const unlistenRecordingFinalized = listen('recording-finalized', () => {
+      loadRecordings();
+    });
+
     return () => {
       unlistenRecordingStopped.then((fn) => fn());
+      unlistenRecordingFinalized.then((fn) => fn());
     };
   }, [loadRecordings]);
 

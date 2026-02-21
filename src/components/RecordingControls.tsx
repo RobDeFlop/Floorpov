@@ -9,9 +9,12 @@ export function RecordingControls() {
   const reduceMotion = useReducedMotion();
   const [isPreviewBusy, setIsPreviewBusy] = useState(false);
   const [previewAction, setPreviewAction] = useState<'starting' | 'stopping' | null>(null);
+  const [isRecordingBusy, setIsRecordingBusy] = useState(false);
+  const [recordingAction, setRecordingAction] = useState<'starting' | 'stopping' | null>(null);
   const {
     isRecording,
     isPreviewing,
+    lastError,
     recordingDuration,
     startPreview,
     stopPreview,
@@ -49,14 +52,24 @@ export function RecordingControls() {
   };
 
   const handleRecordingToggle = async () => {
+    if (isRecordingBusy) {
+      return;
+    }
+
+    setIsRecordingBusy(true);
+    const shouldStopRecording = isRecording;
+    setRecordingAction(shouldStopRecording ? 'stopping' : 'starting');
     try {
-      if (isRecording) {
+      if (shouldStopRecording) {
         await stopRecording();
       } else {
         await startRecording();
       }
     } catch (error) {
       console.error("Recording toggle failed:", error);
+    } finally {
+      setIsRecordingBusy(false);
+      setRecordingAction(null);
     }
   };
 
@@ -99,15 +112,21 @@ export function RecordingControls() {
 
       <motion.button
         onClick={handleRecordingToggle}
+        disabled={isRecordingBusy}
         className={`flex items-center gap-2 px-4 py-2 rounded-md border text-sm font-semibold transition-colors ${
           isRecording
             ? "border-rose-300/40 bg-rose-500/25 hover:bg-rose-500/30 text-rose-50"
             : "border-emerald-300/35 bg-emerald-500/20 hover:bg-emerald-500/28 text-emerald-100"
-        }`}
+        } disabled:opacity-50 disabled:cursor-not-allowed`}
         whileHover={reduceMotion ? undefined : { y: -1 }}
         whileTap={reduceMotion ? undefined : { scale: 0.98 }}
       >
-        {isRecording ? (
+        {recordingAction ? (
+          <>
+            <LoaderCircle className="w-4 h-4 animate-spin" />
+            {recordingAction === 'stopping' ? 'Stopping...' : 'Starting...'}
+          </>
+        ) : isRecording ? (
           <>
             <Square className="w-4 h-4" fill="currentColor" />
             Stop Recording
@@ -137,6 +156,10 @@ export function RecordingControls() {
             Press <kbd className="px-1.5 py-0.5 bg-emerald-500/15 border border-emerald-400/30 rounded text-emerald-200 font-mono">{settings.markerHotkey}</kbd> to add marker
           </span>
         )}
+
+      {lastError && (
+        <span className="text-xs text-rose-300">{lastError}</span>
+      )}
     </motion.div>
   );
 }
