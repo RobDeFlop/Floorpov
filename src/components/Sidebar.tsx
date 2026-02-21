@@ -1,13 +1,18 @@
-import { useState } from "react";
+import { useState } from 'react';
 
-const gameModes = ["Mythic+", "Raid", "PvP"];
+const gameModes = ['Mythic+', 'Raid', 'PvP'];
 
 const links = [
-  { label: "GitHub", url: "https://github.com" },
-  { label: "Discord", url: "https://discord.com" },
+  { label: 'GitHub', url: 'https://github.com' },
+  { label: 'Discord', url: 'https://discord.com' },
 ];
 
-export function Sidebar() {
+interface SidebarProps {
+  onNavigate: (view: 'main' | 'settings') => void;
+  currentView: 'main' | 'settings';
+}
+
+export function Sidebar({ onNavigate, currentView }: SidebarProps) {
   const [activeMode, setActiveMode] = useState<string | null>(null);
 
   return (
@@ -19,8 +24,8 @@ export function Sidebar() {
             onClick={() => setActiveMode(activeMode === mode ? null : mode)}
             className={`w-full text-left px-3 py-2 rounded text-sm transition-colors mb-1 ${
               activeMode === mode
-                ? "bg-neutral-700 text-neutral-100"
-                : "text-neutral-400 hover:text-neutral-100 hover:bg-neutral-700"
+                ? 'bg-neutral-700 text-neutral-100'
+                : 'text-neutral-400 hover:text-neutral-100 hover:bg-neutral-700'
             }`}
           >
             {mode}
@@ -28,7 +33,14 @@ export function Sidebar() {
         ))}
       </nav>
       <div className="p-2 border-t border-neutral-700">
-        <button className="w-full text-left px-3 py-2 rounded text-sm text-neutral-400 hover:text-neutral-100 hover:bg-neutral-700 transition-colors mb-2">
+        <button 
+          onClick={() => onNavigate('settings')}
+          className={`w-full text-left px-3 py-2 rounded text-sm transition-colors mb-2 ${
+            currentView === 'settings'
+              ? 'bg-neutral-700 text-neutral-100'
+              : 'text-neutral-400 hover:text-neutral-100 hover:bg-neutral-700'
+          }`}
+        >
           Settings
         </button>
         <div className="flex gap-2 px-3">

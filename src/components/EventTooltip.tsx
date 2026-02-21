@@ -1,4 +1,4 @@
-import { GameEvent } from "../data/mockEvents";
+import { GameEvent } from "../types/events";
 
 interface EventTooltipProps {
   event: GameEvent;
@@ -12,11 +12,15 @@ function formatTime(seconds: number): string {
 }
 
 export function EventTooltip({ event, x }: EventTooltipProps) {
-  const label = event.type === "death" ? "Death" : "Kill";
+  const label = 
+    event.type === "death" ? "Death" :
+    event.type === "manual" ? "Manual Marker" :
+    "Kill";
+  
   const description =
-    event.type === "death"
-      ? `${event.target} died`
-      : `${event.source} killed ${event.target}`;
+    event.type === "death" ? `${event.target} died` :
+    event.type === "manual" ? "User marked this moment" :
+    `${event.source} killed ${event.target}`;
 
   return (
     <div

@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { Crosshair, Skull } from "lucide-react";
-import { mockEvents, GameEvent } from "../data/mockEvents";
+import { Crosshair, Skull, MapPin } from "lucide-react";
 import { EventTooltip } from "./EventTooltip";
 import { useVideo } from "../contexts/VideoContext";
+import { useMarker } from "../contexts/MarkerContext";
+import { GameEvent } from "../types/events";
 
 export function GameEvents() {
   const { duration, seek } = useVideo();
+  const { events } = useMarker();
   const [hoveredEvent, setHoveredEvent] = useState<GameEvent | null>(null);
   const [tooltipX, setTooltipX] = useState(0);
 
@@ -26,9 +28,10 @@ export function GameEvents() {
       <div className="text-xs text-neutral-500 mb-1.5">Game Events</div>
       <div className="relative h-5">
         <div className="absolute inset-0 bg-neutral-800 rounded-full" />
-        {mockEvents.map((event) => {
+        {events.map((event) => {
           const position = duration > 0 ? (event.timestamp / duration) * 100 : 0;
           const isDeath = event.type === "death";
+          const isManual = event.type === "manual";
           return (
             <div
               key={event.id}
@@ -38,7 +41,9 @@ export function GameEvents() {
               onMouseEnter={(e) => handleEventHover(event, e)}
               onMouseLeave={() => setHoveredEvent(null)}
             >
-              {isDeath ? (
+              {isManual ? (
+                <MapPin className="w-4 h-4 text-blue-400 hover:scale-125 transition-transform" />
+              ) : isDeath ? (
                 <Skull className="w-4 h-4 text-orange-400 hover:scale-125 transition-transform" />
               ) : (
                 <Crosshair className="w-4 h-4 text-emerald-400 hover:scale-125 transition-transform" />

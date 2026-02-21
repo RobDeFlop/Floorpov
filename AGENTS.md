@@ -288,3 +288,224 @@ Address the reader directly with "you" and "your". Support claims with data and 
 - Emojis, hashtags, markdown formatting in prose
 
 **Avoid these words:** comprehensive, delve, utilize, harness, realm, tapestry, unlock, revolutionary, groundbreaking, remarkable, pivotal
+
+## Implementation Plan: WoW Gameplay Recorder
+
+### Project Goal
+
+Floorpov records WoW gameplay with markers on important events (player deaths, kills, etc.). Users can capture either the full monitor or a specific window, with live preview during recording.
+
+### Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Capture | `windows-capture` 2.0 (Windows Graphics Capture API + DXGI Desktop Duplication) |
+| Recording | `windows-capture::VideoEncoder` (H.264/MP4) |
+| Preview Encoding | WIC JPEG via `ImageEncoder` from `windows-capture` |
+| Hotkeys | `tauri-plugin-global-shortcut` (Phase 4) |
+| Combat Log | File watcher + regex parsing (mocked initially) |
+| Audio | WASAPI or `windows-record` (Phase 4 - later) |
+
+### File Structure (Planned)
+
+```
+src-tauri/
+├── Cargo.toml          # Add: windows-capture, tauri-plugin-global-shortcut (Phase 4)
+├── src/
+│   ├── lib.rs          # Tauri commands + module exports
+│   ├── capture.rs      # Preview capture (JPEG frames)
+│   ├── recording.rs    # Video recording (H.264, audio in Phase 4)
+│   └── combat_log.rs   # Combat log parsing (mocked initially)
+
+src/
+├── contexts/
+│   ├── VideoContext.tsx      # Existing - video playback
+│   ├── RecordingContext.tsx  # NEW - recording state, preview frames
+│   └── MarkerContext.tsx     # NEW - events/markers state
+├── components/
+│   ├── VideoPlayer.tsx       # Modified - canvas preview during recording
+│   ├── Timeline.tsx          # Modified - use real markers
+│   ├── RecordingControls.tsx # NEW - start/stop, source selector
+│   └── Settings.tsx          # NEW - capture settings
+├── hooks/
+│   └── usePreview.ts         # NEW - canvas rendering logic
+├── types/
+│   └── events.ts             # NEW - GameEvent types
+└── data/
+    └── mockEvents.ts         # Keep for fallback
+```
+
+### Phase 1: Capture Infrastructure
+
+**Backend Tasks:**
+
+1. Add dependency to `Cargo.toml`:
+   - `windows-capture = "2.0.0-alpha.7"`
+
+2. Create `src/capture.rs`:
+   - `PreviewCapture` struct implementing `GraphicsCaptureApiHandler`
+   - `CaptureSource` enum: `Monitor` | `Window(String)`
+   - `start_capture(source: CaptureSource)` command
+   - `stop_capture()` command
+   - `list_windows()` command - returns available window titles
+   - Emit `"preview-frame"` with JPEG bytes on each frame
+   - Emit `"capture-started"` with `{width, height, source}`
+
+3. Create `src/recording.rs`:
+   - `start_recording(source, outputPath, settings)` command
+   - `stop_recording()` command
+   - Use `VideoEncoder` from `windows-capture` for H.264/MP4
+   - Emit `"recording-started"`, `"recording-stopped"` events
+   - Audio support deferred to Phase 4
+
+4. Update `lib.rs`:
+   - Export capture and recording modules
+   - Register Tauri commands
+
+**Frontend Tasks:**
+
+1. Create `src/contexts/RecordingContext.tsx`:
+
+   ```typescript
+   interface RecordingContextType {
+     isRecording: boolean;
+     isPreviewing: boolean;
+     previewFrameUrl: string | null;
+     captureSource: CaptureSource | null;
+     availableWindows: string[];
+     startPreview(source: CaptureSource): Promise<void>;
+     stopPreview(): void;
+     startRecording(): Promise<string>; // returns output path
+     stopRecording(): Promise<void>;
+   }
+   ```
+
+2. Create `src/components/RecordingControls.tsx`:
+   - Source dropdown: "Primary Monitor" | window list
+   - Start/Stop preview button
+   - Start/Stop recording button
+   - Recording timer display
+
+3. Modify `VideoPlayer.tsx`:
+   - Add `<canvas ref={canvasRef}>` element
+   - Show canvas when `isRecording || isPreviewing`
+   - Show video element when playing back recording
+   - Paint JPEG frames to canvas via `usePreview` hook
+
+4. Create `src/hooks/usePreview.ts`:
+   - Accept `previewFrameUrl`
+   - Draw to canvas on each new frame
+   - Handle canvas sizing
+
+### Phase 2: Settings & Polish
+
+1. Create `src/components/Settings.tsx`:
+   - Video quality dropdown (Low/Medium/High - maps to bitrate)
+   - Frame rate (30/60)
+   - Audio source toggles (system audio, microphone)
+   - Output folder picker
+   - Combat log path picker (for later)
+
+2. Store settings in Tauri's app data via `tauri-plugin-store`
+
+3. UI refinements:
+   - Recording indicator in title bar
+   - Capture border overlay (optional - highlight what's being captured)
+   - Error handling for capture failures
+
+### Phase 3: Markers System
+
+**Backend Tasks:**
+
+1. Create `src/combat_log.rs`:
+   - `CombatEvent` struct: `{ timestamp, event_type, source?, target? }`
+   - Mock implementation that generates random death/kill events at intervals
+   - `start_combat_watch()` - begins mock event emission
+   - `stop_combat_watch()`
+   - Emit `"combat-event"` with `CombatEvent` payload
+   - Later: real implementation parsing WoWCombatLog.txt
+
+2. Add global hotkey:
+   - `register_marker_hotkey()` command
+   - On hotkey press, emit `"manual-marker"` with current timestamp
+
+**Frontend Tasks:**
+
+1. Create `src/contexts/MarkerContext.tsx`:
+
+   ```typescript
+   interface MarkerContextType {
+     events: GameEvent[];
+     addEvent(event: GameEvent): void;
+     clearEvents(): void;
+   }
+   ```
+
+2. Update `Timeline.tsx`:
+   - Consume events from `MarkerContext` instead of `mockEvents`
+   - Show live event markers during recording
+
+3. Update `GameEvents.tsx`:
+   - Same - use real events from context
+
+### Event Flow
+
+```
+[Start Recording]
+       │
+       ▼
+┌──────────────────┐
+│  PreviewCapture  │
+│  - JPEG preview  │
+│  - VideoEncoder  │
+└────────┬─────────┘
+         │
+         │ preview-frame event
+         ▼
+    [Frontend]
+    Canvas draw
+         │
+         │ (parallel)
+         ▼
+┌──────────────────┐
+│ Combat Log Watch │ (mocked)
+│  - UNIT_DIED     │
+│  - PARTY_KILL    │
+└────────┬─────────┘
+         │ combat-event
+         ▼
+    [MarkerContext]
+    Timeline markers update
+```
+
+### Default Settings
+
+| Setting | Value |
+|---------|-------|
+| Video codec | H.264 |
+| Frame rate | 30 fps |
+| Bitrate | 8 Mbps (High) |
+| Container | MP4 |
+| Audio | Phase 3 (deferred) |
+| Preview FPS | 30 (same as recording) |
+| Preview quality | JPEG 85% quality |
+| Output folder | `%USERPROFILE%/Videos/Floorpov/` |
+
+### Implementation Order
+
+1. Backend: Capture module - `capture.rs` with preview-only functionality
+2. Frontend: RecordingContext + usePreview - Show preview in canvas
+3. Backend: Recording module - Add actual MP4 recording (video only)
+4. Frontend: RecordingControls - UI for start/stop
+5. Frontend: Settings - Quality/source configuration
+6. Backend: Combat log mock - Emit fake events
+7. Frontend: MarkerContext - Store and display events
+8. Backend: Hotkeys - Manual marker via keyboard (Phase 4)
+9. Backend: Audio - WASAPI or windows-record integration (Phase 4)
+
+### Current Decisions
+
+- Default capture source: Primary Monitor (user can select window later)
+- Output folder: Default to `%USERPROFILE%/Videos/Floorpov/` (user can change later)
+- Window picker: Dropdown list of available windows (simpler for phase 1)
+- Combat log path: Mocked for now, real implementation later

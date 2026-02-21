@@ -1,7 +1,9 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { useRecording } from '../contexts/RecordingContext';
 
 export function TitleBar() {
   const appWindow = getCurrentWindow();
+  const { isRecording, recordingDuration } = useRecording();
 
   const handleMinimize = () => {
     appWindow.minimize();
@@ -16,7 +18,7 @@ export function TitleBar() {
         await appWindow.maximize();
       }
     } catch (e) {
-      console.error("Maximize error:", e);
+      console.error('Maximize error:', e);
     }
   };
 
@@ -24,13 +26,28 @@ export function TitleBar() {
     appWindow.close();
   };
 
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
   return (
     <div
       data-tauri-drag-region
       className="h-8 bg-neutral-800 flex items-center justify-between border-b border-neutral-700 select-none"
     >
-      <div className="flex items-center px-3" data-tauri-drag-region>
+      <div className="flex items-center gap-3 px-3" data-tauri-drag-region>
         <span className="text-sm font-medium text-neutral-300">Floorpov</span>
+        
+        {isRecording && (
+          <div className="flex items-center gap-2 text-sm">
+            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+            <span className="font-mono text-red-400">
+              REC {formatDuration(recordingDuration)}
+            </span>
+          </div>
+        )}
       </div>
       <div className="flex h-full">
         <button

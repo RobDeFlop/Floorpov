@@ -1,5 +1,7 @@
 import { useRef, useState } from "react";
 import { useVideo } from "../contexts/VideoContext";
+import { useRecording } from "../contexts/RecordingContext";
+import { usePreview } from "../hooks/usePreview";
 import { Play, Pause, Volume2, VolumeX, Maximize, FolderOpen } from "lucide-react";
 
 const PLACEHOLDER_VIDEO = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
@@ -25,9 +27,27 @@ export function VideoPlayer() {
     syncIsPlaying,
   } = useVideo();
 
+  const {
+    isPreviewing,
+    isRecording,
+    previewFrameUrl,
+    captureWidth,
+    captureHeight,
+  } = useRecording();
+
+  const canvasRef = usePreview({
+    previewFrameUrl,
+    width: captureWidth,
+    height: captureHeight,
+    enabled: isPreviewing || isRecording,
+  });
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+
+  const showCanvas = isPreviewing || isRecording;
+  const showVideo = !showCanvas && videoSrc;
 
   const formatTime = (seconds: number) => {
     if (!seconds || isNaN(seconds)) return "0:00";
@@ -46,19 +66,29 @@ export function VideoPlayer() {
 
   return (
     <div className="w-full h-full flex flex-col items-center justify-center bg-neutral-950 relative">
-      <video
-        ref={videoRef}
-        src={videoSrc || undefined}
-        className="max-w-full max-h-full"
-        preload="metadata"
-        onTimeUpdate={(e) => updateTime(e.currentTarget.currentTime)}
-        onLoadedMetadata={(e) => updateDuration(e.currentTarget.duration)}
-        onPlay={() => syncIsPlaying(true)}
-        onPause={() => syncIsPlaying(false)}
-        onEnded={() => syncIsPlaying(false)}
-      />
+      {showCanvas && (
+        <canvas
+          ref={canvasRef}
+          className="max-w-full max-h-full"
+          style={{ objectFit: "contain" }}
+        />
+      )}
 
-      {!videoSrc && (
+      {showVideo && (
+        <video
+          ref={videoRef}
+          src={videoSrc || undefined}
+          className="max-w-full max-h-full"
+          preload="metadata"
+          onTimeUpdate={(e) => updateTime(e.currentTarget.currentTime)}
+          onLoadedMetadata={(e) => updateDuration(e.currentTarget.duration)}
+          onPlay={() => syncIsPlaying(true)}
+          onPause={() => syncIsPlaying(false)}
+          onEnded={() => syncIsPlaying(false)}
+        />
+      )}
+
+      {!videoSrc && !showCanvas && (
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <p className="text-neutral-500 mb-4">No video loaded</p>
           <div className="flex gap-3">
