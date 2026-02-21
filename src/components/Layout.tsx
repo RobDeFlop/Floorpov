@@ -1,23 +1,28 @@
-import { useEffect, useState } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { TitleBar } from './TitleBar';
-import { Sidebar } from './Sidebar';
-import { VideoPlayer } from './VideoPlayer';
-import { GameEvents } from './GameEvents';
-import { RecordingControls } from './RecordingControls';
-import { RecordingsList } from './RecordingsList';
-import { Settings } from './Settings';
-import { VideoProvider } from '../contexts/VideoContext';
-import { RecordingProvider } from '../contexts/RecordingContext';
-import { SettingsProvider } from '../contexts/SettingsContext';
-import { MarkerProvider } from '../contexts/MarkerContext';
-import { panelVariants, smoothTransition } from '../lib/motion';
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { TitleBar } from "./TitleBar";
+import { Sidebar } from "./Sidebar";
+import { VideoPlayer } from "./VideoPlayer";
+import { GameEvents } from "./GameEvents";
+import { RecordingControls } from "./RecordingControls";
+import { RecordingsList } from "./RecordingsList";
+import { Settings } from "./Settings";
+import { CombatLogDebug } from "./CombatLogDebug";
+import { VideoProvider } from "../contexts/VideoContext";
+import { RecordingProvider } from "../contexts/RecordingContext";
+import { SettingsProvider } from "../contexts/SettingsContext";
+import { MarkerProvider } from "../contexts/MarkerContext";
+import { panelVariants, smoothTransition } from "../lib/motion";
+
+type AppView = "main" | "settings" | "debug";
 
 export function Layout() {
-  const [currentView, setCurrentView] = useState<'main' | 'settings'>('main');
+  const [currentView, setCurrentView] = useState<AppView>("main");
+  const [isDebugBuild, setIsDebugBuild] = useState(false);
   const [isResizingMedia, setIsResizingMedia] = useState(false);
   const [mediaSectionHeight, setMediaSectionHeight] = useState(() =>
-    typeof window === 'undefined' ? 520 : Math.round(window.innerHeight * 0.52),
+    typeof window === "undefined" ? 520 : Math.round(window.innerHeight * 0.52),
   );
   const reduceMotion = useReducedMotion();
 
@@ -28,6 +33,26 @@ export function Layout() {
   };
 
   useEffect(() => {
+    const loadDebugFlag = async () => {
+      try {
+        const debugEnabled = await invoke<boolean>("is_debug_build");
+        setIsDebugBuild(debugEnabled);
+      } catch (error) {
+        console.error("Failed to load debug build flag:", error);
+        setIsDebugBuild(false);
+      }
+    };
+
+    loadDebugFlag();
+  }, []);
+
+  useEffect(() => {
+    if (!isDebugBuild && currentView === "debug") {
+      setCurrentView("main");
+    }
+  }, [currentView, isDebugBuild]);
+
+  useEffect(() => {
     const handleWindowResize = () => {
       setMediaSectionHeight((currentHeight) =>
         clampMediaSectionHeight(currentHeight, window.innerHeight),
@@ -35,9 +60,9 @@ export function Layout() {
     };
 
     handleWindowResize();
-    window.addEventListener('resize', handleWindowResize);
+    window.addEventListener("resize", handleWindowResize);
     return () => {
-      window.removeEventListener('resize', handleWindowResize);
+      window.removeEventListener("resize", handleWindowResize);
     };
   }, []);
 
@@ -56,14 +81,14 @@ export function Layout() {
 
     const handlePointerEnd = () => {
       setIsResizingMedia(false);
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerEnd);
-      window.removeEventListener('pointercancel', handlePointerEnd);
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
     };
 
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', handlePointerEnd);
-    window.addEventListener('pointercancel', handlePointerEnd);
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerEnd);
   };
 
   return (
@@ -77,16 +102,17 @@ export function Layout() {
                 <Sidebar 
                   onNavigate={setCurrentView}
                   currentView={currentView}
+                  showDebug={isDebugBuild}
                 />
                 <AnimatePresence mode="wait" initial={false}>
-                  {currentView === 'main' ? (
+                  {currentView === "main" ? (
                     <motion.div
                       key="main-view"
-                      className={`flex-1 flex flex-col min-w-0 rounded-[var(--radius-lg)] border border-emerald-300/10 bg-[var(--surface-0)] shadow-[var(--surface-glow)] overflow-hidden ${isResizingMedia ? 'select-none' : ''}`}
+                      className={`flex-1 flex flex-col min-w-0 rounded-[var(--radius-lg)] border border-emerald-300/10 bg-[var(--surface-0)] shadow-[var(--surface-glow)] overflow-hidden ${isResizingMedia ? "select-none" : ""}`}
                       variants={panelVariants}
-                      initial={reduceMotion ? false : 'initial'}
+                      initial={reduceMotion ? false : "initial"}
                       animate="animate"
-                      exit={reduceMotion ? undefined : 'exit'}
+                      exit={reduceMotion ? undefined : "exit"}
                       transition={smoothTransition}
                     >
                       <section
@@ -100,7 +126,7 @@ export function Layout() {
                       </section>
                       <div
                         className={`flex h-3 w-full cursor-row-resize items-center justify-center border-y border-emerald-300/10 bg-[var(--surface-2)] ${
-                          isResizingMedia ? 'bg-emerald-500/15' : 'hover:bg-white/5'
+                          isResizingMedia ? "bg-emerald-500/15" : "hover:bg-white/5"
                         }`}
                         onPointerDown={handleMediaResizeStart}
                         role="separator"
@@ -112,18 +138,20 @@ export function Layout() {
                       <RecordingsList />
                       <GameEvents />
                     </motion.div>
-                  ) : (
+                  ) : currentView === "settings" ? (
                     <motion.div
                       key="settings-view"
                       className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-[var(--radius-lg)] border border-emerald-300/10 bg-[var(--surface-0)] shadow-[var(--surface-glow)] overflow-hidden"
                       variants={panelVariants}
-                      initial={reduceMotion ? false : 'initial'}
+                      initial={reduceMotion ? false : "initial"}
                       animate="animate"
-                      exit={reduceMotion ? undefined : 'exit'}
+                      exit={reduceMotion ? undefined : "exit"}
                       transition={smoothTransition}
                     >
-                      <Settings onBack={() => setCurrentView('main')} />
+                      <Settings onBack={() => setCurrentView("main")} />
                     </motion.div>
+                  ) : (
+                    <CombatLogDebug />
                   )}
                 </AnimatePresence>
               </div>

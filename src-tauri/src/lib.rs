@@ -1,8 +1,8 @@
 mod capture;
-mod recording;
-mod settings;
 mod combat_log;
 mod hotkey;
+mod recording;
+mod settings;
 
 use std::sync::Arc;
 use tauri::Manager;
@@ -12,6 +12,11 @@ use tokio::sync::RwLock;
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[tauri::command]
+fn is_debug_build() -> bool {
+    cfg!(debug_assertions)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -77,6 +82,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            is_debug_build,
             capture::start_preview,
             capture::stop_preview,
             capture::list_windows,
@@ -90,6 +96,7 @@ pub fn run() {
             combat_log::stop_combat_watch,
             combat_log::validate_wow_folder,
             combat_log::emit_manual_marker,
+            combat_log::parse_combat_log_file,
             hotkey::register_marker_hotkey,
             hotkey::unregister_marker_hotkey,
         ])

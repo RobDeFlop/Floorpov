@@ -1,18 +1,21 @@
 import { useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { Activity, PanelLeft, Radar, SlidersHorizontal } from 'lucide-react';
+import { Activity, Bug, PanelLeft, Radar, SlidersHorizontal } from 'lucide-react';
 
 const gameModes = ['Mythic+', 'Raid', 'PvP'];
 
 interface SidebarProps {
-  onNavigate: (view: 'main' | 'settings') => void;
-  currentView: 'main' | 'settings';
+  onNavigate: (view: 'main' | 'settings' | 'debug') => void;
+  currentView: 'main' | 'settings' | 'debug';
+  showDebug: boolean;
 }
 
-export function Sidebar({ onNavigate, currentView }: SidebarProps) {
+export function Sidebar({ onNavigate, currentView, showDebug }: SidebarProps) {
   const [activeMode, setActiveMode] = useState<string | null>(null);
   const reduceMotion = useReducedMotion();
   const isMain = currentView === 'main';
+  const isSettings = currentView === 'settings';
+  const isDebug = currentView === 'debug';
 
   return (
     <aside className="w-56 border-r border-emerald-300/10 bg-[var(--surface-1)]/95 backdrop-blur-md flex flex-col">
@@ -38,7 +41,7 @@ export function Sidebar({ onNavigate, currentView }: SidebarProps) {
           <motion.button
             onClick={() => onNavigate('settings')}
             className={`flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-sm transition-colors ${
-              !isMain
+              isSettings
                 ? 'border-emerald-300/30 bg-emerald-500/15 text-emerald-100'
                 : 'border-transparent text-neutral-300 hover:border-emerald-300/20 hover:bg-white/5 hover:text-neutral-100'
             }`}
@@ -48,6 +51,21 @@ export function Sidebar({ onNavigate, currentView }: SidebarProps) {
             <SlidersHorizontal className="h-4 w-4" />
             Settings
           </motion.button>
+          {showDebug && (
+            <motion.button
+              onClick={() => onNavigate('debug')}
+              className={`flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-sm transition-colors ${
+                isDebug
+                  ? 'border-amber-300/35 bg-amber-500/15 text-amber-100'
+                  : 'border-transparent text-neutral-300 hover:border-amber-300/25 hover:bg-white/5 hover:text-neutral-100'
+              }`}
+              whileHover={reduceMotion ? undefined : { x: 2 }}
+              whileTap={reduceMotion ? undefined : { scale: 0.99 }}
+            >
+              <Bug className="h-4 w-4" />
+              Debug
+            </motion.button>
+          )}
         </div>
       </div>
 

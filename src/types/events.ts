@@ -13,6 +13,27 @@ export interface CombatEvent {
   target?: string;
 }
 
+export interface ParsedCombatEvent {
+  lineNumber: number;
+  logTimestamp: string;
+  eventType: string;
+  source?: string;
+  target?: string;
+  targetKind?: string;
+  zoneName?: string;
+  encounterName?: string;
+  encounterCategory?: "mythicPlus" | "raid" | "pvp" | "unknown";
+}
+
+export interface ParseCombatLogDebugResult {
+  filePath: string;
+  fileSizeBytes: number;
+  totalLines: number;
+  parsedEvents: ParsedCombatEvent[];
+  eventCounts: Record<string, number>;
+  truncated: boolean;
+}
+
 export function convertCombatEvent(combatEvent: CombatEvent): GameEvent {
   const type = 
     combatEvent.eventType === "PARTY_KILL" ? "kill" :
