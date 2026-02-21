@@ -1,5 +1,48 @@
 @import "tailwindcss";
 
+:root {
+  --app-bg-0: #080c0b;
+  --app-bg-1: #0a1210;
+  --app-bg-2: #0f1a17;
+  --surface-0: rgba(8, 12, 11, 0.88);
+  --surface-1: rgba(12, 19, 17, 0.9);
+  --surface-2: rgba(16, 26, 23, 0.92);
+  --surface-3: rgba(22, 34, 30, 0.95);
+  --surface-border: rgba(103, 232, 182, 0.14);
+  --surface-border-strong: rgba(103, 232, 182, 0.26);
+  --surface-glow: 0 0 0 1px rgba(52, 211, 153, 0.08), 0 10px 24px rgba(0, 0, 0, 0.35);
+  --focus-ring: 0 0 0 2px rgba(52, 211, 153, 0.45);
+  --radius-lg: 14px;
+  --radius-md: 10px;
+  --radius-sm: 8px;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  color: #e6f6ef;
+  background:
+    radial-gradient(1200px 700px at 15% -10%, rgba(16, 185, 129, 0.12), transparent 62%),
+    radial-gradient(900px 650px at 96% 108%, rgba(52, 211, 153, 0.1), transparent 64%),
+    linear-gradient(135deg, var(--app-bg-0), var(--app-bg-1) 42%, var(--app-bg-2));
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.2;
+  background-image: radial-gradient(rgba(167, 243, 208, 0.22) 0.5px, transparent 0.5px);
+  background-size: 3px 3px;
+}
+
 button:not(:disabled),
 a[href],
 summary,
@@ -14,6 +57,11 @@ button:disabled,
 input:disabled,
 [aria-disabled="true"] {
   cursor: not-allowed;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 * {

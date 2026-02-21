@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { RefreshCw, Video } from 'lucide-react';
+import { Clock3, Film, HardDrive, RefreshCw } from 'lucide-react';
 import { useSettings } from '../contexts/SettingsContext';
 import { useVideo } from '../contexts/VideoContext';
 import { useRecording } from '../contexts/RecordingContext';
@@ -102,18 +102,21 @@ export function RecordingsList() {
 
   return (
     <motion.section
-      className="bg-neutral-900 border-t border-neutral-800/80 px-4 py-3 min-h-0"
+      className="bg-[var(--surface-1)] border-t border-emerald-300/10 px-4 py-3 min-h-0"
       variants={panelVariants}
       initial={reduceMotion ? false : 'initial'}
       animate="animate"
       transition={smoothTransition}
     >
       <div className="mb-2.5 flex items-center justify-between pr-2">
-        <h2 className="text-sm font-medium text-neutral-200">Recordings</h2>
+        <h2 className="inline-flex items-center gap-2 text-sm font-medium text-neutral-100">
+          <Film className="h-4 w-4 text-emerald-300" />
+          Recordings
+        </h2>
         <motion.button
           onClick={loadRecordings}
           disabled={isLoading}
-          className="inline-flex h-7 items-center gap-1.5 px-2.5 text-xs rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-400/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="inline-flex h-7 items-center gap-1.5 px-2.5 text-xs rounded-md bg-emerald-500/12 hover:bg-emerald-500/22 text-emerald-300 border border-emerald-400/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           whileHover={reduceMotion ? undefined : { y: -1 }}
           whileTap={reduceMotion ? undefined : { scale: 0.98 }}
         >
@@ -134,18 +137,19 @@ export function RecordingsList() {
               type="button"
               onClick={() => handleLoadRecording(recording)}
               disabled={isRecording || Boolean(loadingRecordingPath)}
-              className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded bg-neutral-800/60 px-2.5 py-1.5 text-left transition-colors hover:bg-neutral-700/70 disabled:cursor-not-allowed disabled:opacity-60"
+              className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-emerald-300/10 bg-black/20 px-2.5 py-1.5 text-left transition-colors hover:border-emerald-300/30 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-60"
               initial={reduceMotion ? false : { opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
               transition={smoothTransition}
             >
               <div className="min-w-0 flex items-center gap-2">
-                <Video className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                <HardDrive className="w-3.5 h-3.5 text-emerald-300/80 shrink-0" />
                 <span className="text-xs text-neutral-200 truncate" title={recording.filename}>
                   {recording.filename}
                 </span>
               </div>
-              <div className="text-[11px] text-neutral-400 shrink-0">
+              <div className="inline-flex items-center gap-1.5 text-[11px] text-neutral-400 shrink-0">
+                <Clock3 className="h-3 w-3" />
                 {loadingRecordingPath === recording.file_path
                   ? 'Loading...'
                   : `${formatBytes(recording.size_bytes)} · ${formatDate(recording.created_at)}`}

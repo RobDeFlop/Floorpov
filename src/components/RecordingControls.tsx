@@ -1,4 +1,4 @@
-import { Circle, LoaderCircle, Square } from "lucide-react";
+import { Circle, Eye, LoaderCircle, Radio, Square, Timer } from "lucide-react";
 import { motion, useReducedMotion } from 'motion/react';
 import { useState } from "react";
 import { useRecording } from "../contexts/RecordingContext";
@@ -62,7 +62,7 @@ export function RecordingControls() {
 
   return (
     <motion.div
-      className="flex items-center gap-3 px-4 py-2 bg-neutral-900 border-t border-neutral-800/80"
+      className="flex items-center gap-3 px-4 py-2.5 border-t border-emerald-300/10 bg-[var(--surface-2)]"
       variants={panelVariants}
       initial={reduceMotion ? false : 'initial'}
       animate="animate"
@@ -71,10 +71,10 @@ export function RecordingControls() {
       <motion.button
         onClick={handlePreviewToggle}
         disabled={isRecording || isPreviewBusy}
-        className={`flex items-center gap-2 px-4 py-2 rounded text-sm font-medium transition-colors ${
+        className={`flex items-center gap-2 px-4 py-2 rounded-md border text-sm font-medium transition-colors ${
           isPreviewing
-            ? "bg-emerald-600 hover:bg-emerald-500 text-white"
-            : "bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700"
+            ? "border-emerald-300/35 bg-emerald-500/18 hover:bg-emerald-500/25 text-emerald-100"
+            : "border-emerald-300/20 bg-white/5 hover:bg-white/10 text-neutral-200"
         } disabled:opacity-50 disabled:cursor-not-allowed`}
         whileHover={reduceMotion ? undefined : { y: -1 }}
         whileTap={reduceMotion ? undefined : { scale: 0.98 }}
@@ -85,18 +85,24 @@ export function RecordingControls() {
             {previewAction === 'stopping' ? 'Stopping...' : 'Starting...'}
           </>
         ) : isPreviewing ? (
-          'Stop Preview'
+          <>
+            <Eye className="w-4 h-4" />
+            Stop Preview
+          </>
         ) : (
-          'Start Preview'
+          <>
+            <Eye className="w-4 h-4" />
+            Start Preview
+          </>
         )}
       </motion.button>
 
       <motion.button
         onClick={handleRecordingToggle}
-        className={`flex items-center gap-2 px-4 py-2 rounded text-sm font-medium transition-colors ${
+        className={`flex items-center gap-2 px-4 py-2 rounded-md border text-sm font-semibold transition-colors ${
           isRecording
-            ? "bg-red-600 hover:bg-red-500 text-white"
-            : "bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-400/30"
+            ? "border-rose-300/40 bg-rose-500/25 hover:bg-rose-500/30 text-rose-50"
+            : "border-emerald-300/35 bg-emerald-500/20 hover:bg-emerald-500/28 text-emerald-100"
         }`}
         whileHover={reduceMotion ? undefined : { y: -1 }}
         whileTap={reduceMotion ? undefined : { scale: 0.98 }}
@@ -115,14 +121,15 @@ export function RecordingControls() {
       </motion.button>
 
       {isRecording && (
-        <div className="flex items-center gap-2 text-sm">
-          <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-          <span className="font-mono text-neutral-300">{formatDuration(recordingDuration)}</span>
+        <div className="flex items-center gap-2 rounded-md border border-emerald-300/20 bg-black/20 px-2.5 py-1.5 text-sm">
+          <Radio className="w-3.5 h-3.5 text-rose-300 animate-pulse" />
+          <Timer className="w-3.5 h-3.5 text-emerald-200" />
+          <span className="font-mono text-emerald-100">{formatDuration(recordingDuration)}</span>
         </div>
       )}
 
       {isPreviewing && !isRecording && (
-        <span className="text-xs text-neutral-500">Preview active</span>
+        <span className="text-xs text-neutral-400">Preview active</span>
       )}
 
       {!isRecording && settings.markerHotkey !== 'none' && (

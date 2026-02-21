@@ -1,6 +1,8 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { motion, useReducedMotion } from 'motion/react';
+import { Activity, Clapperboard } from 'lucide-react';
 import { useRecording } from '../contexts/RecordingContext';
+import { statusPulseTransition } from '../lib/motion';
 
 export function TitleBar() {
   const appWindow = getCurrentWindow();
@@ -37,14 +39,21 @@ export function TitleBar() {
   return (
     <div
       data-tauri-drag-region
-      className="h-8 bg-neutral-900 flex items-center justify-between border-b border-neutral-800/80 select-none"
+      className="h-10 border-b border-emerald-300/10 bg-[var(--surface-1)] backdrop-blur-md select-none"
     >
-      <div className="flex items-center gap-3 px-3" data-tauri-drag-region>
-        <span className="text-sm font-medium text-neutral-200">Floorpov</span>
-        
+      <div className="flex h-full items-center gap-3 px-3" data-tauri-drag-region>
+        <div className="inline-flex items-center gap-2 rounded-md border border-emerald-300/15 bg-emerald-500/10 px-2 py-1">
+          <Clapperboard className="h-3.5 w-3.5 text-emerald-300" />
+          <span className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-100">Floorpov</span>
+        </div>
+
+        <div className="h-4 w-px bg-emerald-200/15" />
+
+        <div className="text-[11px] uppercase tracking-[0.14em] text-neutral-500">Gameplay Recorder</div>
+
         {isRecording && (
           <motion.div
-            className="flex items-center gap-2 text-sm"
+            className="ml-2 inline-flex items-center gap-2 rounded-md border border-rose-400/30 bg-rose-500/10 px-2.5 py-1"
             animate={
               reduceMotion
                 ? undefined
@@ -52,10 +61,10 @@ export function TitleBar() {
                     opacity: [0.85, 1, 0.85],
                   }
             }
-            transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+            transition={statusPulseTransition}
           >
-            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-            <span className="font-mono text-rose-400">
+            <Activity className="h-3.5 w-3.5 text-rose-300" />
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-rose-200">
               REC {formatDuration(recordingDuration)}
             </span>
           </motion.div>
@@ -64,28 +73,28 @@ export function TitleBar() {
       <div className="flex h-full">
         <button
           onClick={handleMinimize}
-          className="w-12 h-full flex items-center justify-center hover:bg-neutral-800 transition-colors"
+          className="w-12 h-full flex items-center justify-center text-neutral-400 hover:bg-white/5 hover:text-neutral-200 transition-colors"
           title="Minimize"
         >
-          <svg width="10" height="1" viewBox="0 0 10 1" fill="currentColor" className="text-neutral-400">
+          <svg width="10" height="1" viewBox="0 0 10 1" fill="currentColor">
             <rect width="10" height="1" />
           </svg>
         </button>
         <button
           onClick={handleMaximize}
-          className="w-12 h-full flex items-center justify-center hover:bg-neutral-800 transition-colors"
+          className="w-12 h-full flex items-center justify-center text-neutral-400 hover:bg-white/5 hover:text-neutral-200 transition-colors"
           title="Maximize"
         >
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" className="text-neutral-400">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor">
             <rect x="0.5" y="0.5" width="9" height="9" />
           </svg>
         </button>
         <button
           onClick={handleClose}
-          className="w-12 h-full flex items-center justify-center hover:bg-red-600 transition-colors"
+          className="w-12 h-full flex items-center justify-center text-neutral-400 hover:bg-red-600 hover:text-white transition-colors"
           title="Close"
         >
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" className="text-neutral-400 hover:text-white">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor">
             <path d="M1 1L9 9M9 1L1 9" strokeWidth="1.2" />
           </svg>
         </button>

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { Crosshair, Skull, MapPin } from "lucide-react";
+import { Activity } from "lucide-react";
 import { EventTooltip } from "./EventTooltip";
 import { useVideo } from "../contexts/VideoContext";
 import { useMarker } from "../contexts/MarkerContext";
@@ -26,14 +26,22 @@ export function GameEvents() {
   };
 
   return (
-    <div className="game-events-container bg-neutral-900 border-t border-neutral-800/80 px-3 py-2">
-      <div className="text-xs text-neutral-500 mb-1.5">Game Events</div>
-      <div className="relative h-5">
-        <div className="absolute inset-0 bg-neutral-800 rounded-full" />
+    <div className="game-events-container bg-[var(--surface-2)] border-t border-emerald-300/10 px-4 py-3">
+      <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.12em] text-neutral-400">
+        <Activity className="h-3.5 w-3.5 text-emerald-300" />
+        Game Events
+      </div>
+      <div className="relative h-6 rounded-md border border-emerald-300/10 bg-black/20 px-1">
+        <div className="absolute inset-1 rounded-full bg-neutral-800" />
         {events.map((event) => {
           const position = duration > 0 ? (event.timestamp / duration) * 100 : 0;
           const isDeath = event.type === "death";
           const isManual = event.type === "manual";
+          const markerClassName = isManual
+            ? "h-3 w-3 rounded-sm border border-cyan-200/60 bg-cyan-300"
+            : isDeath
+              ? "h-3 w-3 rounded-full border border-rose-200/40 bg-rose-400"
+              : "h-3 w-3 rounded-full border border-emerald-100/40 bg-emerald-300";
           return (
             <motion.div
               key={event.id}
@@ -46,13 +54,7 @@ export function GameEvents() {
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
             >
-              {isManual ? (
-                <MapPin className="w-4 h-4 text-cyan-400 hover:scale-125 transition-transform" />
-              ) : isDeath ? (
-                <Skull className="w-4 h-4 text-rose-400 hover:scale-125 transition-transform" />
-              ) : (
-                <Crosshair className="w-4 h-4 text-emerald-300 hover:scale-125 transition-transform" />
-              )}
+              <span className={`block transition-transform hover:scale-125 ${markerClassName}`} />
             </motion.div>
           );
         })}

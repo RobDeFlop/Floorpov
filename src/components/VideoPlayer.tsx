@@ -3,7 +3,7 @@ import { useVideo } from "../contexts/VideoContext";
 import { useRecording } from "../contexts/RecordingContext";
 import { useMarker } from "../contexts/MarkerContext";
 import { usePreview } from "../hooks/usePreview";
-import { Play, Pause, Volume2, VolumeX, Maximize, FolderOpen, Crosshair, Skull, MapPin } from "lucide-react";
+import { Clapperboard, FolderOpen, Maximize, Pause, Play, Volume2, VolumeX } from "lucide-react";
 
 const PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
 
@@ -87,7 +87,8 @@ export function VideoPlayer() {
 
   return (
     <div className="h-full w-full">
-      <div className="relative h-full w-full overflow-hidden bg-neutral-950">
+      <div className="relative h-full w-full overflow-hidden rounded-[var(--radius-md)] border border-emerald-300/10 bg-neutral-950/90">
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-emerald-500/5 via-transparent to-transparent" />
         {showCanvas && (
           <canvas
             ref={canvasRef}
@@ -135,10 +136,13 @@ export function VideoPlayer() {
               </div>
             ) : (
               <>
-                <p className="text-neutral-500 mb-4">No video loaded</p>
+                <div className="mb-3 rounded-full border border-emerald-300/20 bg-emerald-500/10 p-2">
+                  <Clapperboard className="h-5 w-5 text-emerald-200" />
+                </div>
+                <p className="text-neutral-400 mb-4">No recording loaded</p>
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-2 px-4 py-2 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-200 transition-colors border border-neutral-700"
+                  className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-md text-neutral-200 transition-colors border border-emerald-300/20"
                 >
                   <FolderOpen className="w-4 h-4" />
                   Open File
@@ -149,11 +153,11 @@ export function VideoPlayer() {
         )}
 
         {showVideo && (
-          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-neutral-950/95 to-transparent p-4">
+          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-neutral-950/95 via-neutral-950/70 to-transparent p-4">
             <div className="flex items-center gap-3">
               <button
                 onClick={togglePlay}
-                className="text-white hover:text-neutral-300 transition-colors"
+                className="text-white hover:text-emerald-100 transition-colors"
               >
                 {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
               </button>
@@ -161,7 +165,7 @@ export function VideoPlayer() {
               <div className="flex items-center gap-3">
                 <button
                   onClick={handleVolumeToggle}
-                  className="text-white hover:text-neutral-300 transition-colors"
+                  className="text-white hover:text-emerald-100 transition-colors"
                 >
                   {volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
                 </button>
@@ -198,7 +202,7 @@ export function VideoPlayer() {
 
               <div
                 ref={progressRef}
-                className="group relative h-2 min-w-0 flex-1 cursor-pointer rounded-full bg-neutral-700/80"
+                className="group relative h-2 min-w-0 flex-1 cursor-pointer rounded-full bg-neutral-700/80 border border-emerald-300/10"
                 onClick={handleProgressClick}
               >
                 <div
@@ -213,6 +217,11 @@ export function VideoPlayer() {
                   const position = duration > 0 ? (event.timestamp / duration) * 100 : 0;
                   const isDeath = event.type === "death";
                   const isManual = event.type === "manual";
+                  const markerClassName = isManual
+                    ? "h-2.5 w-2.5 rounded-sm bg-cyan-300"
+                    : isDeath
+                      ? "h-2.5 w-2.5 rounded-full bg-rose-300"
+                      : "h-2.5 w-2.5 rounded-full bg-emerald-200";
                   return (
                     <button
                       key={event.id}
@@ -224,13 +233,7 @@ export function VideoPlayer() {
                         seek(event.timestamp);
                       }}
                     >
-                      {isManual ? (
-                        <MapPin className="h-3 w-3 text-cyan-300" />
-                      ) : isDeath ? (
-                        <Skull className="h-3 w-3 text-rose-300" />
-                      ) : (
-                        <Crosshair className="h-3 w-3 text-emerald-200" />
-                      )}
+                      <span className={`block ${markerClassName}`} />
                     </button>
                   );
                 })}

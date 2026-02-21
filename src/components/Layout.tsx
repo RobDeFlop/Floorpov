@@ -73,7 +73,7 @@ export function Layout() {
           <RecordingProvider>
             <div className="h-screen w-screen flex flex-col bg-neutral-950 text-neutral-100 overflow-hidden">
               <TitleBar />
-              <div className="flex flex-1 min-h-0">
+              <div className="flex flex-1 min-h-0 p-3 gap-3">
                 <Sidebar 
                   onNavigate={setCurrentView}
                   currentView={currentView}
@@ -82,7 +82,7 @@ export function Layout() {
                   {currentView === 'main' ? (
                     <motion.div
                       key="main-view"
-                      className={`flex-1 flex flex-col min-w-0 ${isResizingMedia ? 'select-none' : ''}`}
+                      className={`flex-1 flex flex-col min-w-0 rounded-[var(--radius-lg)] border border-emerald-300/10 bg-[var(--surface-0)] shadow-[var(--surface-glow)] overflow-hidden ${isResizingMedia ? 'select-none' : ''}`}
                       variants={panelVariants}
                       initial={reduceMotion ? false : 'initial'}
                       animate="animate"
@@ -93,21 +93,21 @@ export function Layout() {
                         className="flex w-full shrink-0 flex-col overflow-hidden"
                         style={{ height: mediaSectionHeight }}
                       >
-                        <main className="flex-1 min-h-0 overflow-hidden flex items-center justify-center bg-neutral-950/95">
+                        <main className="flex-1 min-h-0 overflow-hidden flex items-center justify-center bg-neutral-950/70">
                           <VideoPlayer />
                         </main>
                         <RecordingControls />
                       </section>
                       <div
-                        className={`flex h-3 w-full cursor-row-resize items-center justify-center border-t border-neutral-800/80 bg-neutral-900 ${
-                          isResizingMedia ? 'bg-neutral-800/90' : 'hover:bg-neutral-800/70'
+                        className={`flex h-3 w-full cursor-row-resize items-center justify-center border-y border-emerald-300/10 bg-[var(--surface-2)] ${
+                          isResizingMedia ? 'bg-emerald-500/15' : 'hover:bg-white/5'
                         }`}
                         onPointerDown={handleMediaResizeStart}
                         role="separator"
                         aria-orientation="horizontal"
                         aria-label="Resize media section"
                       >
-                        <div className="h-0.5 w-24 rounded-full bg-neutral-600" />
+                        <div className="h-0.5 w-24 rounded-full bg-emerald-200/30" />
                       </div>
                       <RecordingsList />
                       <GameEvents />
@@ -115,7 +115,7 @@ export function Layout() {
                   ) : (
                     <motion.div
                       key="settings-view"
-                      className="h-full flex-1 min-w-0 min-h-0 flex flex-col"
+                      className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-[var(--radius-lg)] border border-emerald-300/10 bg-[var(--surface-0)] shadow-[var(--surface-glow)] overflow-hidden"
                       variants={panelVariants}
                       initial={reduceMotion ? false : 'initial'}
                       animate="animate"

@@ -1,6 +1,5 @@
 import { useState, useRef } from "react";
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { Crosshair, Skull, MapPin } from "lucide-react";
 import { EventTooltip } from "./EventTooltip";
 import { useVideo } from "../contexts/VideoContext";
 import { useMarker } from "../contexts/MarkerContext";
@@ -62,6 +61,11 @@ export function Timeline() {
             const position = duration > 0 ? (event.timestamp / duration) * 100 : 0;
             const isDeath = event.type === "death";
             const isManual = event.type === "manual";
+            const markerClassName = isManual
+              ? "h-2.5 w-2.5 rounded-sm bg-cyan-300"
+              : isDeath
+                ? "h-2.5 w-2.5 rounded-full bg-rose-300"
+                : "h-2.5 w-2.5 rounded-full bg-emerald-200";
             return (
               <motion.div
                 key={event.id}
@@ -77,13 +81,7 @@ export function Timeline() {
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
               >
-                {isManual ? (
-                  <MapPin className="w-3 h-3 text-cyan-400 hover:scale-125 transition-transform" />
-                ) : isDeath ? (
-                  <Skull className="w-3 h-3 text-rose-400 hover:scale-125 transition-transform" />
-                ) : (
-                  <Crosshair className="w-3 h-3 text-emerald-300 hover:scale-125 transition-transform" />
-                )}
+                <span className={`block transition-transform hover:scale-125 ${markerClassName}`} />
               </motion.div>
             );
           })}
