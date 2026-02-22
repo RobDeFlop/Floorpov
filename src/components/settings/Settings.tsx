@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -36,6 +36,50 @@ interface SettingsProps {
 interface CaptureWindowInfo {
   hwnd: string;
   title: string;
+  process_name: string | null;
+}
+
+const VIDEO_QUALITY_OPTIONS: SettingsSelectOption[] = Object.entries(QUALITY_SETTINGS).map(
+  ([key, { label }]) => ({ value: key, label }),
+);
+
+const FRAME_RATE_OPTIONS: SettingsSelectOption[] = [
+  { value: "30", label: "30 FPS" },
+  { value: "60", label: "60 FPS" },
+];
+
+const MARKER_HOTKEY_OPTIONS: SettingsSelectOption[] = HOTKEY_OPTIONS.map(({ value, label }) => ({
+  value,
+  label,
+}));
+
+const CAPTURE_SOURCE_OPTIONS: SettingsSelectOption[] = [
+  { value: "monitor", label: "Primary Monitor" },
+  { value: "window", label: "Specific Window" },
+];
+
+const FIELD_IDS = {
+  videoQuality: "settings-video-quality",
+  frameRate: "settings-frame-rate",
+  captureSource: "settings-capture-source",
+  captureWindow: "settings-capture-window",
+  outputFolder: "settings-output-folder",
+  maxStorageGB: "settings-max-storage",
+  wowFolder: "settings-wow-folder",
+  markerHotkey: "settings-marker-hotkey",
+  enableSystemAudio: "settings-enable-system-audio",
+  enableRecordingDiagnostics: "settings-enable-recording-diagnostics",
+};
+
+const NUMBER_FIELD_CLASS_NAME =
+  "w-full rounded-md border border-white/20 bg-black/20 px-3 py-2 text-sm text-neutral-100 transition-colors placeholder:text-neutral-400 focus:border-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-black/10 disabled:text-neutral-500";
+
+function formatCaptureWindowLabel(title: string, processName: string | null): string {
+  return processName && processName.trim().length > 0 ? `${title} (${processName})` : title;
+}
+
+function isStorageLimitWithinBounds(maxStorageGB: number): boolean {
+  return maxStorageGB >= MIN_STORAGE_GB && maxStorageGB <= MAX_STORAGE_GB;
 }
 
 export function Settings({ onBack }: SettingsProps) {
@@ -119,7 +163,6 @@ export function Settings({ onBack }: SettingsProps) {
     }
   }, [formData.captureSource, loadCaptureWindows]);
 
-
   const loadFolderSize = async () => {
     try {
       const size = await invoke<number>("get_folder_size", {
@@ -138,21 +181,17 @@ export function Settings({ onBack }: SettingsProps) {
         multiple: false,
         defaultPath: formData.outputFolder,
       });
-      
-        if (selected && typeof selected === "string") {
-          setFormData({ ...formData, outputFolder: selected });
-        }
+
+      if (selected && typeof selected === "string") {
+        setFormData({ ...formData, outputFolder: selected });
+      }
     } catch (error) {
       console.error("Failed to open folder picker:", error);
     }
   };
 
   const handleSave = async () => {
-    if (formData.maxStorageGB < MIN_STORAGE_GB) {
-      return;
-    }
-    
-    if (formData.maxStorageGB > MAX_STORAGE_GB) {
+    if (!isStorageLimitWithinBounds(formData.maxStorageGB)) {
       return;
     }
 
@@ -177,9 +216,9 @@ export function Settings({ onBack }: SettingsProps) {
         defaultPath: formData.wowFolder || formData.outputFolder,
       });
 
-        if (selected && typeof selected === "string") {
-          setFormData({ ...formData, wowFolder: selected });
-        }
+      if (selected && typeof selected === "string") {
+        setFormData({ ...formData, wowFolder: selected });
+      }
     } catch (error) {
       console.error("Failed to open WoW folder picker:", error);
     }
@@ -194,67 +233,54 @@ export function Settings({ onBack }: SettingsProps) {
     ? Math.min(100, (folderSize / (formData.maxStorageGB * 1024 ** 3)) * 100)
     : 0;
 
-  const fieldClassName =
-    "w-full rounded-md border border-white/20 bg-black/20 px-3 py-2 text-sm text-neutral-100 transition-colors placeholder:text-neutral-400 focus:border-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-black/10 disabled:text-neutral-500";
-  const videoQualityOptions: SettingsSelectOption[] = Object.entries(QUALITY_SETTINGS).map(
-    ([key, { label }]) => ({ value: key, label }),
-  );
-  const frameRateOptions: SettingsSelectOption[] = [
-    { value: "30", label: "30 FPS" },
-    { value: "60", label: "60 FPS" },
-  ];
-  const markerHotkeyOptions: SettingsSelectOption[] = HOTKEY_OPTIONS.map(({ value, label }) => ({
-    value,
-    label,
-  }));
-  const captureSourceOptions: SettingsSelectOption[] = [
-    { value: "monitor", label: "Primary Monitor" },
-    { value: "window", label: "Specific Window" },
-  ];
-  const availableCaptureWindowOptions: SettingsSelectOption[] = captureWindows.map(
-    ({ hwnd, title }) => ({
+  const availableCaptureWindowOptions: SettingsSelectOption[] = useMemo(() => {
+    return captureWindows.map(({ hwnd, title, process_name }) => ({
       value: hwnd,
-      label: title,
-    }),
-  );
-  const captureWindowOptions: SettingsSelectOption[] = [...availableCaptureWindowOptions];
-  const isSavedCaptureWindowUnavailable =
-    formData.captureSource === "window" &&
-    formData.captureWindowHwnd.length > 0 &&
-    !availableCaptureWindowOptions.some(({ value }) => value === formData.captureWindowHwnd);
+      label: formatCaptureWindowLabel(title, process_name),
+    }));
+  }, [captureWindows]);
 
-  if (isSavedCaptureWindowUnavailable) {
-    captureWindowOptions.unshift({
-      value: formData.captureWindowHwnd,
-      label: formData.captureWindowTitle
-        ? `${formData.captureWindowTitle} (Unavailable)`
-        : "Previously selected window (Unavailable)",
-      disabled: true,
-    });
-  }
+  const isSavedCaptureWindowUnavailable = useMemo(() => {
+    return (
+      formData.captureSource === "window" &&
+      formData.captureWindowHwnd.length > 0 &&
+      !availableCaptureWindowOptions.some(({ value }) => value === formData.captureWindowHwnd)
+    );
+  }, [availableCaptureWindowOptions, formData.captureSource, formData.captureWindowHwnd]);
 
-  if (captureWindowOptions.length === 0) {
-    captureWindowOptions.push({
-      value: "",
-      label: isLoadingCaptureWindows ? "Loading windows..." : "No capturable windows found",
-      disabled: true,
-    });
-  }
+  const captureWindowOptions: SettingsSelectOption[] = useMemo(() => {
+    const nextCaptureWindowOptions = [...availableCaptureWindowOptions];
 
-  const isCaptureWindowSelectDisabled =
-    isLoadingCaptureWindows || captureWindowOptions.every((option) => option.disabled);
-  const fieldIds = {
-    videoQuality: 'settings-video-quality',
-    frameRate: 'settings-frame-rate',
-    captureSource: 'settings-capture-source',
-    captureWindow: 'settings-capture-window',
-    outputFolder: 'settings-output-folder',
-    maxStorageGB: 'settings-max-storage',
-    wowFolder: 'settings-wow-folder',
-    markerHotkey: 'settings-marker-hotkey',
-    enableSystemAudio: 'settings-enable-system-audio',
-    enableRecordingDiagnostics: 'settings-enable-recording-diagnostics',
-  };
+    if (isSavedCaptureWindowUnavailable) {
+      nextCaptureWindowOptions.unshift({
+        value: formData.captureWindowHwnd,
+        label: formData.captureWindowTitle
+          ? `${formData.captureWindowTitle} (Unavailable)`
+          : "Previously selected window (Unavailable)",
+        disabled: true,
+      });
+    }
+
+    if (nextCaptureWindowOptions.length === 0) {
+      nextCaptureWindowOptions.push({
+        value: "",
+        label: isLoadingCaptureWindows ? "Loading windows..." : "No capturable windows found",
+        disabled: true,
+      });
+    }
+
+    return nextCaptureWindowOptions;
+  }, [
+    availableCaptureWindowOptions,
+    formData.captureWindowHwnd,
+    formData.captureWindowTitle,
+    isLoadingCaptureWindows,
+    isSavedCaptureWindowUnavailable,
+  ]);
+
+  const isCaptureWindowSelectDisabled = useMemo(() => {
+    return isLoadingCaptureWindows || captureWindowOptions.every((option) => option.disabled);
+  }, [captureWindowOptions, isLoadingCaptureWindows]);
 
   return (
     <div className="relative flex flex-1 min-h-0 flex-col overflow-hidden bg-[var(--surface-0)]">
@@ -301,11 +327,11 @@ export function Settings({ onBack }: SettingsProps) {
           <SettingsSection title="Video" icon={<Video className="h-4 w-4" />}>
             <div className="grid gap-4 md:grid-cols-2">
               <div>
-                <label htmlFor={fieldIds.videoQuality} className="mb-2 block text-sm text-neutral-300">Quality Preset</label>
+                <label htmlFor={FIELD_IDS.videoQuality} className="mb-2 block text-sm text-neutral-300">Quality Preset</label>
                 <SettingsSelect
-                  id={fieldIds.videoQuality}
+                  id={FIELD_IDS.videoQuality}
                   value={formData.videoQuality}
-                  options={videoQualityOptions}
+                  options={VIDEO_QUALITY_OPTIONS}
                   onChange={(nextValue) => setFormData({ ...formData, videoQuality: nextValue as any })}
                   ariaDescribedBy="settings-video-quality-help"
                 />
@@ -315,11 +341,11 @@ export function Settings({ onBack }: SettingsProps) {
               </div>
 
               <div>
-                <label htmlFor={fieldIds.frameRate} className="mb-2 block text-sm text-neutral-300">Frame Rate</label>
+                <label htmlFor={FIELD_IDS.frameRate} className="mb-2 block text-sm text-neutral-300">Frame Rate</label>
                 <SettingsSelect
-                  id={fieldIds.frameRate}
+                  id={FIELD_IDS.frameRate}
                   value={String(formData.frameRate)}
-                  options={frameRateOptions}
+                  options={FRAME_RATE_OPTIONS}
                   onChange={(nextValue) => {
                     setFormData({ ...formData, frameRate: parseInt(nextValue) as any });
                   }}
@@ -336,7 +362,7 @@ export function Settings({ onBack }: SettingsProps) {
             <div className="space-y-4">
               <div>
                 <ReadOnlyPathField
-                  inputId={fieldIds.outputFolder}
+                  inputId={FIELD_IDS.outputFolder}
                   label="Output Folder"
                   value={formData.outputFolder}
                   onBrowse={handleBrowseFolder}
@@ -358,17 +384,17 @@ export function Settings({ onBack }: SettingsProps) {
               </div>
 
               <div>
-                <label htmlFor={fieldIds.maxStorageGB} className="mb-2 block text-sm text-neutral-300">
+                <label htmlFor={FIELD_IDS.maxStorageGB} className="mb-2 block text-sm text-neutral-300">
                   Maximum Storage (GB)
                 </label>
                 <input
-                  id={fieldIds.maxStorageGB}
+                  id={FIELD_IDS.maxStorageGB}
                   type="number"
                   min={MIN_STORAGE_GB}
                   max={MAX_STORAGE_GB}
                   value={formData.maxStorageGB}
                   onChange={(e) => setFormData({ ...formData, maxStorageGB: parseInt(e.target.value) || MIN_STORAGE_GB })}
-                  className={fieldClassName}
+                  className={NUMBER_FIELD_CLASS_NAME}
                   aria-describedby="settings-max-storage-help"
                 />
                 <p id="settings-max-storage-help" className="mt-1 text-xs text-neutral-400">
@@ -381,14 +407,14 @@ export function Settings({ onBack }: SettingsProps) {
           <SettingsSection title="Capture" icon={<Monitor className="h-4 w-4" />}>
             <div className="space-y-4">
               <div>
-                <label htmlFor={fieldIds.captureSource} className="mb-2 inline-flex items-center gap-1.5 text-sm text-neutral-300">
+                <label htmlFor={FIELD_IDS.captureSource} className="mb-2 inline-flex items-center gap-1.5 text-sm text-neutral-300">
                   <AppWindow className="h-3.5 w-3.5" />
                   Capture Source
                 </label>
                 <SettingsSelect
-                  id={fieldIds.captureSource}
+                  id={FIELD_IDS.captureSource}
                   value={formData.captureSource}
-                  options={captureSourceOptions}
+                  options={CAPTURE_SOURCE_OPTIONS}
                   onChange={(nextValue) => {
                     setFormData({
                       ...formData,
@@ -406,11 +432,11 @@ export function Settings({ onBack }: SettingsProps) {
                 <div className="space-y-2 rounded-sm border border-white/15 bg-black/20 p-3">
                   <div className="flex flex-wrap items-end gap-2">
                     <div className="min-w-0 flex-1">
-                      <label htmlFor={fieldIds.captureWindow} className="mb-2 block text-sm text-neutral-300">
+                      <label htmlFor={FIELD_IDS.captureWindow} className="mb-2 block text-sm text-neutral-300">
                         Window
                       </label>
                       <SettingsSelect
-                        id={fieldIds.captureWindow}
+                        id={FIELD_IDS.captureWindow}
                         value={formData.captureWindowHwnd}
                         options={captureWindowOptions}
                         placeholder="Select a window"
@@ -467,7 +493,7 @@ export function Settings({ onBack }: SettingsProps) {
               <div className="rounded-sm border border-white/15 bg-black/20 p-3">
                 <p className="mb-2 text-xs uppercase tracking-[0.08em] text-neutral-500">Troubleshooting</p>
                 <SettingsToggleField
-                  id={fieldIds.enableRecordingDiagnostics}
+                  id={FIELD_IDS.enableRecordingDiagnostics}
                   checked={formData.enableRecordingDiagnostics}
                   onChange={(checked) => {
                     setFormData({
@@ -486,7 +512,7 @@ export function Settings({ onBack }: SettingsProps) {
             <div className="space-y-4">
               <div>
                 <ReadOnlyPathField
-                  inputId={fieldIds.wowFolder}
+                  inputId={FIELD_IDS.wowFolder}
                   label="WoW Folder"
                   value={formData.wowFolder}
                   onBrowse={handleBrowseWowFolder}
@@ -515,11 +541,11 @@ export function Settings({ onBack }: SettingsProps) {
           <SettingsSection title="Hotkeys" icon={<Keyboard className="h-4 w-4" />}>
             <div className="space-y-4">
               <div>
-                <label htmlFor={fieldIds.markerHotkey} className="mb-2 block text-sm text-neutral-300">Manual Marker Hotkey</label>
+                <label htmlFor={FIELD_IDS.markerHotkey} className="mb-2 block text-sm text-neutral-300">Manual Marker Hotkey</label>
                 <SettingsSelect
-                  id={fieldIds.markerHotkey}
+                  id={FIELD_IDS.markerHotkey}
                   value={formData.markerHotkey}
-                  options={markerHotkeyOptions}
+                  options={MARKER_HOTKEY_OPTIONS}
                   onChange={(nextValue) => setFormData({ ...formData, markerHotkey: nextValue as any })}
                   ariaDescribedBy="settings-marker-hotkey-help"
                 />
@@ -540,7 +566,7 @@ export function Settings({ onBack }: SettingsProps) {
               </p>
 
               <SettingsToggleField
-                id={fieldIds.enableSystemAudio}
+                id={FIELD_IDS.enableSystemAudio}
                 checked={formData.enableSystemAudio}
                 onChange={(checked) => {
                   setFormData({

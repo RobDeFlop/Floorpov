@@ -1,4 +1,6 @@
 use crate::settings::RecordingSettings;
+#[cfg(target_os = "windows")]
+use std::path::Path;
 
 use super::model::{
     CaptureInput, CaptureWindowInfo, MonitorIndexSearchState, WindowCaptureAvailability,
@@ -7,11 +9,15 @@ use super::model::{
 };
 
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
+use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, POINT, RECT};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Graphics::Gdi::{
     ClientToScreen, EnumDisplayMonitors, GetMonitorInfoW, MonitorFromWindow, HDC, HMONITOR,
     MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::Threading::{
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -41,6 +47,57 @@ fn normalize_capture_dimension(value: u32) -> u32 {
         normalized = normalized.saturating_sub(1);
     }
     normalized.max(MIN_CAPTURE_DIMENSION)
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_process_name(process_id: u32) -> Option<String> {
+    if process_id == 0 {
+        return None;
+    }
+
+    let process_handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+    if process_handle.is_null() {
+        return None;
+    }
+
+    let mut process_path_buffer = vec![0u16; 260];
+    let mut process_path_length = process_path_buffer.len() as u32;
+
+    let query_result = unsafe {
+        QueryFullProcessImageNameW(
+            process_handle,
+            0,
+            process_path_buffer.as_mut_ptr(),
+            &mut process_path_length as *mut u32,
+        )
+    };
+
+    unsafe {
+        CloseHandle(process_handle);
+    }
+
+    if query_result == 0 || process_path_length == 0 {
+        return None;
+    }
+
+    let full_process_path =
+        String::from_utf16_lossy(&process_path_buffer[..process_path_length as usize]);
+    let process_name = Path::new(&full_process_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            let trimmed_path = full_process_path.trim();
+            if trimmed_path.is_empty() {
+                None
+            } else {
+                Some(trimmed_path.to_string())
+            }
+        });
+
+    process_name
 }
 
 pub(crate) fn sanitize_capture_dimensions(width: u32, height: u32) -> (u32, u32) {
@@ -481,6 +538,8 @@ unsafe extern "system" fn collect_capture_windows_callback(hwnd: HWND, lparam: L
         return 1;
     }
 
+    let process_name = resolve_process_name(process_id);
+
     let title_length = GetWindowTextLengthW(hwnd);
     if title_length <= 0 {
         return 1;
@@ -503,6 +562,7 @@ unsafe extern "system" fn collect_capture_windows_callback(hwnd: HWND, lparam: L
     capture_windows.push(CaptureWindowInfo {
         hwnd: (hwnd as usize).to_string(),
         title,
+        process_name,
     });
 
     1

@@ -18,6 +18,7 @@ pub struct RecordingStartedPayload {
 pub struct CaptureWindowInfo {
     pub(crate) hwnd: String,
     pub(crate) title: String,
+    pub(crate) process_name: Option<String>,
 }
 
 #[derive(Clone)]
