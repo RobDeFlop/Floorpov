@@ -188,7 +188,12 @@ pub fn cleanup_old_recordings(
         let file_path = Path::new(&folder_path).join(&oldest.filename);
 
         if let Err(e) = std::fs::remove_file(&file_path) {
-            eprintln!("Failed to delete {}: {}", oldest.filename, e);
+            tracing::warn!(
+                filename = %oldest.filename,
+                path = %file_path.display(),
+                error = %e,
+                "Failed to delete old recording during cleanup"
+            );
             continue;
         }
 

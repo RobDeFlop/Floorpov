@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,6 +32,8 @@ const SYSTEM_AUDIO_CHUNK_FRAMES: usize = 960;
 const SYSTEM_AUDIO_EVENT_TIMEOUT_MS: u32 = 500;
 const AUDIO_TCP_ACCEPT_WAIT_MS: u64 = 25;
 const SYSTEM_AUDIO_QUEUE_CAPACITY: usize = 256;
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Default)]
 struct AudioPipelineStats {
@@ -41,6 +45,7 @@ struct AudioPipelineStats {
 
 pub struct RecordingState {
     is_recording: bool,
+    is_stopping: bool,
     current_output_path: Option<String>,
     stop_tx: Option<mpsc::Sender<()>>,
 }
@@ -49,6 +54,7 @@ impl RecordingState {
     pub fn new() -> Self {
         Self {
             is_recording: false,
+            is_stopping: false,
             current_output_path: None,
             stop_tx: None,
         }
@@ -95,7 +101,10 @@ fn resolve_ffmpeg_binary_path(app_handle: &AppHandle) -> Result<PathBuf, String>
 }
 
 fn select_video_encoder(ffmpeg_binary_path: &Path) -> (String, Option<String>) {
-    let output = Command::new(ffmpeg_binary_path)
+    let mut command = Command::new(ffmpeg_binary_path);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = command
         .arg("-hide_banner")
         .arg("-encoders")
         .stdout(Stdio::piped())
@@ -221,12 +230,8 @@ fn run_system_audio_capture_to_queue(
         }
 
         while sample_queue.len() >= chunk_size_bytes {
-            let mut chunk = vec![0u8; chunk_size_bytes];
-            for sample in &mut chunk {
-                if let Some(value) = sample_queue.pop_front() {
-                    *sample = value;
-                }
-            }
+            let mut chunk = Vec::with_capacity(chunk_size_bytes);
+            chunk.extend(sample_queue.drain(..chunk_size_bytes));
 
             match audio_tx.try_send(chunk) {
                 Ok(()) => {
@@ -256,9 +261,7 @@ fn run_system_audio_capture_to_queue(
 
     if !sample_queue.is_empty() {
         let mut remaining = Vec::with_capacity(sample_queue.len());
-        while let Some(value) = sample_queue.pop_front() {
-            remaining.push(value);
-        }
+        remaining.extend(sample_queue.drain(..));
         if audio_tx.try_send(remaining).is_ok() {
             stats.queued_chunks.fetch_add(1, Ordering::Relaxed);
         }
@@ -309,14 +312,26 @@ fn run_audio_queue_to_writer<TWriter: Write>(
 }
 
 fn clear_recording_state(state: &SharedRecordingState) {
-    match state.try_write() {
-        Ok(mut recording_state) => {
-            recording_state.is_recording = false;
-            recording_state.current_output_path = None;
-            recording_state.stop_tx = None;
+    let mut recording_state = state.blocking_write();
+    recording_state.is_recording = false;
+    recording_state.is_stopping = false;
+    recording_state.current_output_path = None;
+    recording_state.stop_tx = None;
+}
+
+fn signal_audio_threads_stop(
+    audio_capture_stop_tx: &Option<std_mpsc::Sender<()>>,
+    audio_writer_stop_tx: &Option<std_mpsc::Sender<()>>,
+) {
+    if let Some(capture_stop_tx) = audio_capture_stop_tx {
+        if let Err(error) = capture_stop_tx.send(()) {
+            tracing::debug!("Audio capture stop signal channel is closed: {error}");
         }
-        Err(_) => {
-            tracing::warn!("Could not clear recording state immediately due to lock contention");
+    }
+
+    if let Some(writer_stop_tx) = audio_writer_stop_tx {
+        if let Err(error) = writer_stop_tx.send(()) {
+            tracing::debug!("Audio writer stop signal channel is closed: {error}");
         }
     }
 }
@@ -363,6 +378,8 @@ fn spawn_ffmpeg_recording_task(
         );
 
         let mut command = Command::new(&ffmpeg_binary_path);
+        #[cfg(target_os = "windows")]
+        command.creation_flags(CREATE_NO_WINDOW);
         command
             .arg("-hide_banner")
             .arg("-loglevel")
@@ -621,12 +638,7 @@ fn spawn_ffmpeg_recording_task(
                 match stop_rx.try_recv() {
                     Ok(()) | Err(TryRecvError::Disconnected) => {
                         stop_requested_at = Some(Instant::now());
-                        if let Some(capture_stop_tx) = &audio_capture_stop_tx {
-                            let _ = capture_stop_tx.send(());
-                        }
-                        if let Some(writer_stop_tx) = &audio_writer_stop_tx {
-                            let _ = writer_stop_tx.send(());
-                        }
+                        signal_audio_threads_stop(&audio_capture_stop_tx, &audio_writer_stop_tx);
 
                         if let Some(mut stdin) = child.stdin.take() {
                             let _ = stdin.write_all(b"q\n");
@@ -697,6 +709,8 @@ fn spawn_ffmpeg_recording_task(
             }
         };
 
+        signal_audio_threads_stop(&audio_capture_stop_tx, &audio_writer_stop_tx);
+
         if let Some(stderr_thread) = stderr_thread {
             if let Err(error) = stderr_thread.join() {
                 tracing::warn!("Failed to join FFmpeg stderr thread: {error:?}");
@@ -727,20 +741,33 @@ fn spawn_ffmpeg_recording_task(
             }
         }
 
-        match exit_status {
+        let ffmpeg_completed_successfully = match exit_status {
             Ok(status) if status.success() => {
                 tracing::info!("FFmpeg recording process finished successfully");
+                true
             }
             Ok(status) => {
                 tracing::error!("FFmpeg recording process exited with status: {status}");
+                false
             }
             Err(error) => {
                 tracing::error!("Failed while waiting for FFmpeg recording process: {error}");
+                if let Err(kill_error) = child.kill() {
+                    tracing::debug!("FFmpeg kill after wait failure returned: {kill_error}");
+                }
+                if let Err(wait_error) = child.wait() {
+                    tracing::warn!("Failed to collect FFmpeg exit status after kill: {wait_error}");
+                }
+                false
             }
-        }
+        };
 
-        if Path::new(&output_path).exists() {
-            emit_recording_finalized(&app_handle, &output_path);
+        if ffmpeg_completed_successfully {
+            if Path::new(&output_path).exists() {
+                emit_recording_finalized(&app_handle, &output_path);
+            } else {
+                tracing::warn!("FFmpeg reported success but output file was not found");
+            }
         }
 
         clear_recording_state(&state);
@@ -758,7 +785,7 @@ pub async fn start_recording(
 ) -> Result<RecordingStartedPayload, String> {
     {
         let recording_state = state.read().await;
-        if recording_state.is_recording {
+        if recording_state.is_recording || recording_state.is_stopping {
             return Err("Recording already in progress".to_string());
         }
     }
@@ -818,11 +845,12 @@ pub async fn start_recording(
 
     {
         let mut recording_state = state.write().await;
-        if recording_state.is_recording {
+        if recording_state.is_recording || recording_state.is_stopping {
             return Err("Recording already in progress".to_string());
         }
 
         recording_state.is_recording = true;
+        recording_state.is_stopping = false;
         recording_state.current_output_path = Some(output_path_str.clone());
         recording_state.stop_tx = Some(stop_tx);
     }
@@ -863,7 +891,11 @@ pub async fn stop_recording(
             .clone()
             .ok_or_else(|| "No output path found".to_string())?;
 
-        recording_state.is_recording = false;
+        if recording_state.is_stopping {
+            return Ok(output_path);
+        }
+
+        recording_state.is_stopping = true;
 
         (output_path, recording_state.stop_tx.take())
     };
