@@ -1,6 +1,6 @@
-# FloorPoV 🎮
+# FloorPoV
 
-> **Smart WoW Gameplay Recording with Automatic Event Markers**
+> **WoW Gameplay Recording with Automatic Event Markers**
 
 [![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/RobDeFlop/FloorPoV)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -12,13 +12,13 @@ FloorPoV is a desktop application that records your World of Warcraft gameplay w
 
 | Feature | Description |
 |---------|-------------|
-| 🎯 **Smart Event Markers** | Automatically detects player deaths, kills, interrupts, dispels, and boss encounters |
-| 🎥 **High-Quality Recording** | FFmpeg-powered capture with H.264/MP4 output and quality presets |
-| ⌨️ **Manual Markers** | Add custom markers during gameplay with configurable hotkeys (F9-F12) |
-| 📊 **Combat Log Integration** | Real-time WoW combat log parsing for accurate event tracking |
-| ⚡ **Performance Optimized** | Lightweight recording that won't impact your gameplay performance |
-| 🎵 **System Audio Capture** | Optional desktop/game audio recording via WASAPI loopback |
-| 🗂️ **Organized Library** | Browse recordings by game mode (Mythic+, Raid, PvP) with metadata |
+|  **Smart Event Markers** | Automatically detects player deaths, kills, interrupts, dispels, and boss encounters |
+|  **High-Quality Recording** | FFmpeg-powered capture with H.264/MP4 output and quality presets |
+|  **Manual Markers** | Add custom markers during gameplay with configurable hotkeys (F9-F12) |
+|  **Combat Log Integration** | Real-time WoW combat log parsing for accurate event tracking |
+|  **Performance Optimized** | Lightweight recording that won't impact your gameplay performance |
+|  **System Audio Capture** | Optional desktop/game audio recording via WASAPI loopback |
+|  **Organized Library** | Browse recordings by game mode (Mythic+, Raid, PvP) with metadata |
 
 ## 🚀 Quick Start
 
@@ -89,7 +89,7 @@ cargo fmt --check
 cargo test
 ```
 
-## 🎮 Use Cases
+##  Use Cases
 
 - **Mythic+ Analysis**: Review deaths and interrupts to improve dungeon runs
 - **Raid Progression**: Analyze boss encounters and player performance
