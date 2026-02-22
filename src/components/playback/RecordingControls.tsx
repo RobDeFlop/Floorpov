@@ -1,9 +1,9 @@
 import { Circle, Eye, LoaderCircle, Radio, Square, Timer } from "lucide-react";
 import { motion, useReducedMotion } from 'motion/react';
 import { useState } from "react";
-import { useRecording } from "../contexts/RecordingContext";
-import { useSettings } from "../contexts/SettingsContext";
-import { panelVariants, smoothTransition } from '../lib/motion';
+import { useRecording } from "../../contexts/RecordingContext";
+import { useSettings } from "../../contexts/SettingsContext";
+import { panelVariants, smoothTransition } from '../../lib/motion';
 
 export function RecordingControls() {
   const reduceMotion = useReducedMotion();
@@ -75,16 +75,17 @@ export function RecordingControls() {
 
   return (
     <motion.div
-      className="flex items-center gap-3 px-4 py-2.5 border-t border-emerald-300/10 bg-[var(--surface-2)]"
+      className="flex flex-wrap items-center gap-2 border-t border-emerald-300/10 bg-[var(--surface-2)] px-3 py-2.5 sm:gap-3 sm:px-4"
       variants={panelVariants}
       initial={reduceMotion ? false : 'initial'}
       animate="animate"
       transition={smoothTransition}
     >
       <motion.button
+        type="button"
         onClick={handlePreviewToggle}
         disabled={isRecording || isPreviewBusy}
-        className={`flex items-center gap-2 px-4 py-2 rounded-md border text-sm font-medium transition-colors ${
+        className={`flex items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 ${
           isPreviewing
             ? "border-emerald-300/35 bg-emerald-500/18 hover:bg-emerald-500/25 text-emerald-100"
             : "border-emerald-300/20 bg-white/5 hover:bg-white/10 text-neutral-200"
@@ -111,9 +112,10 @@ export function RecordingControls() {
       </motion.button>
 
       <motion.button
+        type="button"
         onClick={handleRecordingToggle}
         disabled={isRecordingBusy}
-        className={`flex items-center gap-2 px-4 py-2 rounded-md border text-sm font-semibold transition-colors ${
+        className={`flex items-center gap-2 rounded-md border px-4 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 ${
           isRecording
             ? "border-rose-300/40 bg-rose-500/25 hover:bg-rose-500/30 text-rose-50"
             : "border-emerald-300/35 bg-emerald-500/20 hover:bg-emerald-500/28 text-emerald-100"
@@ -148,17 +150,17 @@ export function RecordingControls() {
       )}
 
       {isPreviewing && !isRecording && (
-        <span className="text-xs text-neutral-400">Preview active</span>
+        <span className="text-xs text-neutral-300">Preview active</span>
       )}
 
       {!isRecording && settings.markerHotkey !== 'none' && (
-          <span className="ml-auto mr-2 text-xs text-neutral-500">
+          <span className="mr-2 text-xs text-neutral-400 md:ml-auto">
             Press <kbd className="px-1.5 py-0.5 bg-emerald-500/15 border border-emerald-400/30 rounded text-emerald-200 font-mono">{settings.markerHotkey}</kbd> to add marker
           </span>
         )}
 
       {lastError && (
-        <span className="text-xs text-rose-300">{lastError}</span>
+        <span className="text-xs text-rose-300" role="status">{lastError}</span>
       )}
     </motion.div>
   );

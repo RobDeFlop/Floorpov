@@ -2,9 +2,10 @@ import { useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Activity } from "lucide-react";
 import { EventTooltip } from "./EventTooltip";
-import { useVideo } from "../contexts/VideoContext";
-import { useMarker } from "../contexts/MarkerContext";
-import { GameEvent } from "../types/events";
+import { EventMarker } from "./EventMarker";
+import { useVideo } from "../../contexts/VideoContext";
+import { useMarker } from "../../contexts/MarkerContext";
+import { GameEvent } from "../../types/events";
 
 export function GameEvents() {
   const { duration, seek } = useVideo();
@@ -35,27 +36,26 @@ export function GameEvents() {
         <div className="absolute inset-1 rounded-full bg-neutral-800" />
         {events.map((event) => {
           const position = duration > 0 ? (event.timestamp / duration) * 100 : 0;
-          const isDeath = event.type === "death";
-          const isManual = event.type === "manual";
-          const markerClassName = isManual
-            ? "h-3 w-3 rounded-sm border border-cyan-200/60 bg-cyan-300"
-            : isDeath
-              ? "h-3 w-3 rounded-full border border-rose-200/40 bg-rose-400"
-              : "h-3 w-3 rounded-full border border-emerald-100/40 bg-emerald-300";
           return (
-            <motion.div
+            <motion.button
               key={event.id}
-              className="absolute top-1/2 -translate-y-1/2 cursor-pointer -ml-2"
+              type="button"
+              className="absolute top-1/2 -ml-2 -translate-y-1/2 rounded-sm p-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60"
               style={{ left: `${position}%` }}
               onClick={() => handleEventClick(event.timestamp)}
               onMouseEnter={(e) => handleEventHover(event, e)}
               onMouseLeave={() => setHoveredEvent(null)}
+              aria-label={`Seek to ${event.type} event at ${event.timestamp.toFixed(1)} seconds`}
               initial={reduceMotion ? false : { opacity: 0, scale: 0.85 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
             >
-              <span className={`block transition-transform hover:scale-125 ${markerClassName}`} />
-            </motion.div>
+              <EventMarker
+                type={event.type}
+                variant="detailed"
+                className="transition-transform hover:scale-125"
+              />
+            </motion.button>
           );
         })}
         <AnimatePresence>{hoveredEvent && <EventTooltip event={hoveredEvent} x={tooltipX} />}</AnimatePresence>

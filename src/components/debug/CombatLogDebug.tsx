@@ -12,8 +12,8 @@ import {
   Sword,
 } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
-import { ParseCombatLogDebugResult } from "../types/events";
-import { panelVariants, smoothTransition } from "../lib/motion";
+import { ParseCombatLogDebugResult } from "../../types/events";
+import { panelVariants, smoothTransition } from "../../lib/motion";
 
 interface EncounterTimelineSegment {
   id: string;

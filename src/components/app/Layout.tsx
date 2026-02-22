@@ -3,17 +3,17 @@ import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { TitleBar } from "./TitleBar";
 import { Sidebar } from "./Sidebar";
-import { VideoPlayer } from "./VideoPlayer";
-import { GameEvents } from "./GameEvents";
-import { RecordingControls } from "./RecordingControls";
-import { RecordingsList } from "./RecordingsList";
-import { Settings } from "./Settings";
-import { CombatLogDebug } from "./CombatLogDebug";
-import { VideoProvider } from "../contexts/VideoContext";
-import { RecordingProvider } from "../contexts/RecordingContext";
-import { SettingsProvider } from "../contexts/SettingsContext";
-import { MarkerProvider } from "../contexts/MarkerContext";
-import { panelVariants, smoothTransition } from "../lib/motion";
+import { VideoPlayer } from "../playback/VideoPlayer";
+import { GameEvents } from "../events/GameEvents";
+import { RecordingControls } from "../playback/RecordingControls";
+import { RecordingsList } from "../playback/RecordingsList";
+import { Settings } from "../settings/Settings";
+import { CombatLogDebug } from "../debug/CombatLogDebug";
+import { VideoProvider } from "../../contexts/VideoContext";
+import { RecordingProvider } from "../../contexts/RecordingContext";
+import { SettingsProvider } from "../../contexts/SettingsContext";
+import { MarkerProvider } from "../../contexts/MarkerContext";
+import { panelVariants, smoothTransition } from "../../lib/motion";
 
 type AppView = "main" | "settings" | "debug";
 
@@ -91,6 +91,12 @@ export function Layout() {
     window.addEventListener("pointercancel", handlePointerEnd);
   };
 
+  const adjustMediaSectionHeight = (delta: number) => {
+    setMediaSectionHeight((currentHeight) => {
+      return clampMediaSectionHeight(currentHeight + delta, window.innerHeight);
+    });
+  };
+
   return (
     <VideoProvider>
       <SettingsProvider>
@@ -98,7 +104,7 @@ export function Layout() {
           <RecordingProvider>
             <div className="h-screen w-screen flex flex-col bg-neutral-950 text-neutral-100 overflow-hidden">
               <TitleBar />
-              <div className="flex flex-1 min-h-0 p-3 gap-3">
+              <div className="flex flex-1 min-h-0 flex-col gap-2 p-2 md:flex-row md:gap-3 md:p-3">
                 <Sidebar 
                   onNavigate={setCurrentView}
                   currentView={currentView}
@@ -125,13 +131,29 @@ export function Layout() {
                         <RecordingControls />
                       </section>
                       <div
-                        className={`flex h-3 w-full cursor-row-resize items-center justify-center border-y border-emerald-300/10 bg-[var(--surface-2)] ${
+                        className={`flex h-3 w-full cursor-row-resize items-center justify-center border-y border-emerald-300/10 bg-[var(--surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 ${
                           isResizingMedia ? "bg-emerald-500/15" : "hover:bg-white/5"
                         }`}
                         onPointerDown={handleMediaResizeStart}
+                        onKeyDown={(event) => {
+                          if (event.key === "ArrowUp") {
+                            event.preventDefault();
+                            adjustMediaSectionHeight(-24);
+                            return;
+                          }
+
+                          if (event.key === "ArrowDown") {
+                            event.preventDefault();
+                            adjustMediaSectionHeight(24);
+                          }
+                        }}
                         role="separator"
                         aria-orientation="horizontal"
                         aria-label="Resize media section"
+                        aria-valuemin={320}
+                        aria-valuenow={mediaSectionHeight}
+                        aria-valuemax={Math.max(320, Math.round(window.innerHeight * 0.58))}
+                        tabIndex={0}
                       >
                         <div className="h-0.5 w-24 rounded-full bg-emerald-200/30" />
                       </div>

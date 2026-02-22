@@ -1,10 +1,9 @@
-import { useState, useEffect } from 'react';
-import { open } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
+import { useState, useEffect } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowLeft,
   CheckCircle2,
-  Folder,
   HardDrive,
   Keyboard,
   Mic,
@@ -14,10 +13,18 @@ import {
   Video,
   Volume2,
   XCircle,
-} from 'lucide-react';
-import { useSettings } from '../contexts/SettingsContext';
-import { useRecording } from '../contexts/RecordingContext';
-import { RecordingSettings, QUALITY_SETTINGS, MIN_STORAGE_GB, MAX_STORAGE_GB, HOTKEY_OPTIONS } from '../types/settings';
+} from "lucide-react";
+import { useSettings } from "../../contexts/SettingsContext";
+import { useRecording } from "../../contexts/RecordingContext";
+import {
+  RecordingSettings,
+  QUALITY_SETTINGS,
+  MIN_STORAGE_GB,
+  MAX_STORAGE_GB,
+  HOTKEY_OPTIONS,
+} from "../../types/settings";
+import { ReadOnlyPathField } from "./ReadOnlyPathField";
+import { SettingsSection } from "./SettingsSection";
 
 interface SettingsProps {
   onBack: () => void;
@@ -170,12 +177,12 @@ export function Settings({ onBack }: SettingsProps) {
 
   const loadFolderSize = async () => {
     try {
-      const size = await invoke<number>('get_folder_size', { 
-        path: formData.outputFolder 
+      const size = await invoke<number>("get_folder_size", {
+        path: formData.outputFolder,
       });
       setFolderSize(size);
     } catch (error) {
-      console.error('Failed to get folder size:', error);
+      console.error("Failed to get folder size:", error);
     }
   };
 
@@ -187,11 +194,11 @@ export function Settings({ onBack }: SettingsProps) {
         defaultPath: formData.outputFolder,
       });
       
-      if (selected && typeof selected === 'string') {
-        setFormData({ ...formData, outputFolder: selected });
-      }
+        if (selected && typeof selected === "string") {
+          setFormData({ ...formData, outputFolder: selected });
+        }
     } catch (error) {
-      console.error('Failed to open folder picker:', error);
+      console.error("Failed to open folder picker:", error);
     }
   };
 
@@ -229,17 +236,17 @@ export function Settings({ onBack }: SettingsProps) {
         defaultPath: formData.wowFolder || formData.outputFolder,
       });
 
-      if (selected && typeof selected === 'string') {
-        setFormData({ ...formData, wowFolder: selected });
-      }
+        if (selected && typeof selected === "string") {
+          setFormData({ ...formData, wowFolder: selected });
+        }
     } catch (error) {
-      console.error('Failed to open WoW folder picker:', error);
+      console.error("Failed to open WoW folder picker:", error);
     }
   };
 
   const formatBytes = (bytes: number) => {
     const gb = bytes / (1024 ** 3);
-    return gb.toFixed(2) + ' GB';
+    return gb.toFixed(2) + " GB";
   };
 
   const usagePercentage = formData.maxStorageGB > 0 
@@ -247,21 +254,29 @@ export function Settings({ onBack }: SettingsProps) {
     : 0;
 
   const fieldClassName =
-    'w-full rounded-md border border-emerald-300/20 bg-black/20 px-3 py-2 text-sm text-neutral-100 transition-colors placeholder:text-neutral-500 focus:border-emerald-300/35';
-  const readOnlyFieldClassName =
-    'flex-1 rounded-md border border-emerald-300/20 bg-black/20 px-3 py-2 text-sm text-neutral-300';
-  const sectionClassName =
-    'rounded-[var(--radius-md)] border border-emerald-300/10 bg-[var(--surface-1)]/80 p-4';
-  const sectionHeadingClassName =
-    'mb-4 inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.13em] text-emerald-200';
-  const browseButtonClassName =
-    'inline-flex items-center gap-2 rounded-md border border-emerald-300/25 bg-emerald-500/12 px-4 py-2 text-sm text-emerald-100 transition-colors hover:bg-emerald-500/20';
+    "w-full rounded-md border border-emerald-300/20 bg-black/20 px-3 py-2 text-sm text-neutral-100 transition-colors placeholder:text-neutral-400 focus:border-emerald-300/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/45";
+  const fieldIds = {
+    videoQuality: 'settings-video-quality',
+    frameRate: 'settings-frame-rate',
+    outputFolder: 'settings-output-folder',
+    maxStorageGB: 'settings-max-storage',
+    captureSource: 'settings-capture-source',
+    selectedWindow: 'settings-selected-window',
+    wowFolder: 'settings-wow-folder',
+    markerHotkey: 'settings-marker-hotkey',
+    enableSystemAudio: 'settings-enable-system-audio',
+    enableMicrophone: 'settings-enable-microphone',
+  };
 
   return (
     <div className="relative flex flex-1 min-h-0 flex-col overflow-hidden bg-[var(--surface-0)]">
       {isRecording && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm">
-          <div className="max-w-md rounded-[var(--radius-md)] border border-rose-300/25 bg-[var(--surface-2)] p-8 text-center shadow-[var(--surface-glow)]">
+          <div
+            className="max-w-md rounded-[var(--radius-md)] border border-rose-300/25 bg-[var(--surface-2)] p-8 text-center shadow-[var(--surface-glow)]"
+            role="status"
+            aria-live="polite"
+          >
             <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-rose-500/20">
               <div className="h-3 w-3 rounded-full bg-rose-400 animate-pulse" />
             </div>
@@ -273,11 +288,13 @@ export function Settings({ onBack }: SettingsProps) {
         </div>
       )}
 
-      <div className="shrink-0 border-b border-emerald-300/10 bg-[var(--surface-1)] px-6 py-4 flex items-center gap-4">
+      <div className="flex shrink-0 items-center gap-4 border-b border-emerald-300/10 bg-[var(--surface-1)] px-4 py-4 md:px-6">
         <div className="flex items-center gap-3">
           <button
+            type="button"
             onClick={onBack}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-emerald-300/20 bg-black/20 text-neutral-200 transition-colors hover:bg-white/5"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-emerald-300/20 bg-black/20 text-neutral-200 transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60"
+            aria-label="Back to main view"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
@@ -291,33 +308,32 @@ export function Settings({ onBack }: SettingsProps) {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6 pb-10">
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-6 pb-10 md:px-6">
         <div className="mx-auto w-full max-w-6xl space-y-4">
-          <section className={sectionClassName}>
-            <h2 className={sectionHeadingClassName}>
-              <Video className="h-4 w-4" />
-              Video
-            </h2>
+          <SettingsSection title="Video" icon={<Video className="h-4 w-4" />}>
             <div className="grid gap-4 md:grid-cols-2">
               <div>
-                <label className="mb-2 block text-sm text-neutral-300">Video Quality</label>
+                <label htmlFor={fieldIds.videoQuality} className="mb-2 block text-sm text-neutral-300">Video Quality</label>
                 <select
+                  id={fieldIds.videoQuality}
                   value={formData.videoQuality}
                   onChange={(e) => setFormData({ ...formData, videoQuality: e.target.value as any })}
                   className={fieldClassName}
+                  aria-describedby="settings-video-quality-help"
                 >
                   {Object.entries(QUALITY_SETTINGS).map(([key, { label }]) => (
                     <option key={key} value={key}>{label}</option>
                   ))}
                 </select>
-                <p className="mt-1 text-xs text-neutral-500">
+                <p id="settings-video-quality-help" className="mt-1 text-xs text-neutral-400">
                   Higher quality uses more disk space
                 </p>
               </div>
 
               <div>
-                <label className="mb-2 block text-sm text-neutral-300">Frame Rate</label>
+                <label htmlFor={fieldIds.frameRate} className="mb-2 block text-sm text-neutral-300">Frame Rate</label>
                 <select
+                  id={fieldIds.frameRate}
                   value={formData.frameRate}
                   onChange={(e) => setFormData({ ...formData, frameRate: parseInt(e.target.value) as any })}
                   className={fieldClassName}
@@ -327,33 +343,19 @@ export function Settings({ onBack }: SettingsProps) {
                 </select>
               </div>
             </div>
-          </section>
+          </SettingsSection>
 
-          <section className={sectionClassName}>
-            <h2 className={sectionHeadingClassName}>
-              <HardDrive className="h-4 w-4" />
-              Output
-            </h2>
+          <SettingsSection title="Output" icon={<HardDrive className="h-4 w-4" />}>
             <div className="space-y-4">
               <div>
-                <label className="mb-2 block text-sm text-neutral-300">Output Folder</label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={formData.outputFolder}
-                    readOnly
-                    className={readOnlyFieldClassName}
-                  />
-                  <button
-                    onClick={handleBrowseFolder}
-                    className={browseButtonClassName}
-                  >
-                    <Folder className="w-4 h-4" />
-                    Browse
-                  </button>
-                </div>
+                <ReadOnlyPathField
+                  inputId={fieldIds.outputFolder}
+                  label="Output Folder"
+                  value={formData.outputFolder}
+                  onBrowse={handleBrowseFolder}
+                />
                 <div className="mt-3 rounded-md border border-emerald-300/10 bg-black/20 p-3">
-                  <div className="mb-2 flex items-center justify-between text-xs text-neutral-400">
+                  <div className="mb-2 flex items-center justify-between text-xs text-neutral-300">
                     <span>Current usage</span>
                     <span className="font-mono text-neutral-200">
                       {formatBytes(folderSize)} / {formData.maxStorageGB} GB ({usagePercentage.toFixed(0)}%)
@@ -369,33 +371,32 @@ export function Settings({ onBack }: SettingsProps) {
               </div>
 
               <div>
-                <label className="mb-2 block text-sm text-neutral-300">
+                <label htmlFor={fieldIds.maxStorageGB} className="mb-2 block text-sm text-neutral-300">
                   Maximum Storage (GB)
                 </label>
                 <input
+                  id={fieldIds.maxStorageGB}
                   type="number"
                   min={MIN_STORAGE_GB}
                   max={MAX_STORAGE_GB}
                   value={formData.maxStorageGB}
                   onChange={(e) => setFormData({ ...formData, maxStorageGB: parseInt(e.target.value) || MIN_STORAGE_GB })}
                   className={fieldClassName}
+                  aria-describedby="settings-max-storage-help"
                 />
-                <p className="mt-1 text-xs text-neutral-500">
+                <p id="settings-max-storage-help" className="mt-1 text-xs text-neutral-400">
                   Old recordings will be automatically deleted when this limit is reached (minimum {MIN_STORAGE_GB} GB)
                 </p>
               </div>
             </div>
-          </section>
+          </SettingsSection>
 
-          <section className={sectionClassName}>
-            <h2 className={sectionHeadingClassName}>
-              <Monitor className="h-4 w-4" />
-              Capture
-            </h2>
+          <SettingsSection title="Capture" icon={<Monitor className="h-4 w-4" />}>
             <div className="space-y-4">
               <div>
-                <label className="mb-2 block text-sm text-neutral-300">Capture Source</label>
+                <label htmlFor={fieldIds.captureSource} className="mb-2 block text-sm text-neutral-300">Capture Source</label>
                 <select
+                  id={fieldIds.captureSource}
                   value={formData.captureSource}
                   onChange={(e) =>
                     setFormData({
@@ -413,7 +414,7 @@ export function Settings({ onBack }: SettingsProps) {
               {formData.captureSource === "window" && (
                 <div>
                   <div className="mb-2 flex items-center justify-between">
-                    <label className="block text-sm text-neutral-300">Window</label>
+                    <label htmlFor={fieldIds.selectedWindow} className="block text-sm text-neutral-300">Window</label>
                     <button
                       type="button"
                       onClick={loadWindows}
@@ -425,10 +426,18 @@ export function Settings({ onBack }: SettingsProps) {
                     </button>
                   </div>
                   <select
+                    id={fieldIds.selectedWindow}
                     value={formData.selectedWindow || ""}
                     onChange={(e) => setFormData({ ...formData, selectedWindow: e.target.value })}
                     className={fieldClassName}
                     disabled={availableWindows.length === 0 || isLoadingWindows}
+                    aria-describedby={
+                      windowsError
+                        ? "settings-window-error"
+                        : availableWindows.length > 0
+                          ? "settings-window-help"
+                          : undefined
+                    }
                   >
                     <option value="" disabled>
                       {isLoadingWindows ? "Loading windows..." : "Select a window"}
@@ -442,43 +451,31 @@ export function Settings({ onBack }: SettingsProps) {
                     ))}
                   </select>
                   {windowsError && (
-                    <p className="mt-1 text-xs text-rose-300">{windowsError}</p>
+                    <p id="settings-window-error" className="mt-1 text-xs text-rose-300" role="status">
+                      {windowsError}
+                    </p>
                   )}
                   {!windowsError && availableWindows.length > 0 && (
-                    <p className="mt-1 text-xs text-neutral-500">
+                    <p id="settings-window-help" className="mt-1 text-xs text-neutral-400">
                       Pick the app window to preview and record.
                     </p>
                   )}
                 </div>
               )}
             </div>
-          </section>
+          </SettingsSection>
 
-          <section className={sectionClassName}>
-            <h2 className={sectionHeadingClassName}>
-              <CheckCircle2 className="h-4 w-4" />
-              Combat Log
-            </h2>
+          <SettingsSection title="Combat Log" icon={<CheckCircle2 className="h-4 w-4" />}>
             <div className="space-y-4">
               <div>
-                <label className="mb-2 block text-sm text-neutral-300">WoW Folder</label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={formData.wowFolder}
-                    readOnly
-                    className={readOnlyFieldClassName}
-                  />
-                  <button
-                    onClick={handleBrowseWowFolder}
-                    className={browseButtonClassName}
-                  >
-                    <Folder className="w-4 h-4" />
-                    Browse
-                  </button>
-                </div>
+                <ReadOnlyPathField
+                  inputId={fieldIds.wowFolder}
+                  label="WoW Folder"
+                  value={formData.wowFolder}
+                  onBrowse={handleBrowseWowFolder}
+                />
                 {!formData.wowFolder && (
-                  <p className="mt-2 text-xs text-neutral-500">
+                  <p className="mt-2 text-xs text-neutral-400">
                     Select your WoW installation folder. Floorpov reads combat events from Logs/WoWCombatLog.txt.
                   </p>
                 )}
@@ -496,42 +493,41 @@ export function Settings({ onBack }: SettingsProps) {
                 )}
               </div>
             </div>
-          </section>
+          </SettingsSection>
 
-          <section className={sectionClassName}>
-            <h2 className={sectionHeadingClassName}>
-              <Keyboard className="h-4 w-4" />
-              Hotkeys
-            </h2>
+          <SettingsSection title="Hotkeys" icon={<Keyboard className="h-4 w-4" />}>
             <div className="space-y-4">
               <div>
-                <label className="mb-2 block text-sm text-neutral-300">Manual Marker Hotkey</label>
+                <label htmlFor={fieldIds.markerHotkey} className="mb-2 block text-sm text-neutral-300">Manual Marker Hotkey</label>
                 <select
+                  id={fieldIds.markerHotkey}
                   value={formData.markerHotkey}
                   onChange={(e) => setFormData({ ...formData, markerHotkey: e.target.value as any })}
                   className={fieldClassName}
+                  aria-describedby="settings-marker-hotkey-help"
                 >
                   {HOTKEY_OPTIONS.map(({ value, label }) => (
                     <option key={value} value={value}>{label}</option>
                   ))}
                 </select>
-                <p className="mt-1 text-xs text-neutral-500">
+                <p id="settings-marker-hotkey-help" className="mt-1 text-xs text-neutral-400">
                   Press this key during recording to add a manual marker. If the key is already in use by another application, try a different one.
                 </p>
               </div>
             </div>
-          </section>
+          </SettingsSection>
 
-          <section className={`${sectionClassName} opacity-70`}>
-            <h2 className={sectionHeadingClassName}>
-              <Volume2 className="h-4 w-4" />
-              Audio
-            </h2>
+          <SettingsSection
+            title="Audio"
+            icon={<Volume2 className="h-4 w-4" />}
+            className="opacity-70"
+          >
             <div className="space-y-4">
-              <p className="text-sm text-neutral-500">Audio recording will be available in a later phase.</p>
+              <p className="text-sm text-neutral-400">Audio recording will be available in a later phase.</p>
 
-              <label className="flex items-center gap-3 cursor-not-allowed rounded-md border border-emerald-300/10 bg-black/20 px-3 py-2">
+              <label htmlFor={fieldIds.enableSystemAudio} className="flex items-center gap-3 cursor-not-allowed rounded-md border border-emerald-300/10 bg-black/20 px-3 py-2 text-neutral-300">
                 <input
+                  id={fieldIds.enableSystemAudio}
                   type="checkbox"
                   disabled
                   checked={formData.enableSystemAudio}
@@ -540,8 +536,9 @@ export function Settings({ onBack }: SettingsProps) {
                 <span className="text-sm">Enable System Audio</span>
               </label>
 
-              <label className="flex items-center gap-3 cursor-not-allowed rounded-md border border-emerald-300/10 bg-black/20 px-3 py-2">
+              <label htmlFor={fieldIds.enableMicrophone} className="flex items-center gap-3 cursor-not-allowed rounded-md border border-emerald-300/10 bg-black/20 px-3 py-2 text-neutral-300">
                 <input
+                  id={fieldIds.enableMicrophone}
                   type="checkbox"
                   disabled
                   checked={formData.enableMicrophone}
@@ -553,22 +550,24 @@ export function Settings({ onBack }: SettingsProps) {
                 </span>
               </label>
             </div>
-          </section>
+          </SettingsSection>
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-emerald-300/10 bg-[var(--surface-1)] px-6 py-4 flex justify-end gap-3">
+      <div className="flex shrink-0 flex-wrap justify-end gap-3 border-t border-emerald-300/10 bg-[var(--surface-1)] px-4 py-4 md:px-6">
         <button
+          type="button"
           onClick={handleCancel}
           disabled={!hasChanges}
-          className="rounded-md border border-emerald-300/20 bg-black/20 px-4 py-2 text-sm font-medium text-neutral-200 transition-colors hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="rounded-md border border-emerald-300/20 bg-black/20 px-4 py-2 text-sm font-medium text-neutral-200 transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Cancel
         </button>
         <button
+          type="button"
           onClick={handleSave}
           disabled={!hasChanges}
-          className="rounded-md border border-emerald-300/35 bg-emerald-500/20 px-4 py-2 text-sm font-semibold text-emerald-100 transition-colors hover:bg-emerald-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="rounded-md border border-emerald-300/35 bg-emerald-500/20 px-4 py-2 text-sm font-semibold text-emerald-100 transition-colors hover:bg-emerald-500/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Save Changes
         </button>

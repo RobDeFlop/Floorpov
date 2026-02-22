@@ -1,11 +1,32 @@
-import { useRef, useState } from "react";
-import { useVideo } from "../contexts/VideoContext";
-import { useRecording } from "../contexts/RecordingContext";
-import { useMarker } from "../contexts/MarkerContext";
-import { usePreview } from "../hooks/usePreview";
+import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useVideo } from "../../contexts/VideoContext";
+import { useRecording } from "../../contexts/RecordingContext";
+import { useMarker } from "../../contexts/MarkerContext";
+import { usePreview } from "../../hooks/usePreview";
 import { Clapperboard, FolderOpen, Maximize, Pause, Play, Volume2, VolumeX } from "lucide-react";
+import { EventMarker } from "../events/EventMarker";
 
 const PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
+
+interface ControlIconButtonProps {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}
+
+function ControlIconButton({ label, onClick, children }: ControlIconButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded p-1 text-white transition-colors hover:text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/70"
+      aria-label={label}
+      title={label}
+    >
+      {children}
+    </button>
+  );
+}
 
 export function VideoPlayer() {
   const {
@@ -46,6 +67,7 @@ export function VideoPlayer() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
+  const speedMenuRef = useRef<HTMLDivElement>(null);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [volumeBeforeMute, setVolumeBeforeMute] = useState(1);
 
@@ -68,7 +90,7 @@ export function VideoPlayer() {
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const url = URL.createObjectURL(file);
@@ -77,6 +99,31 @@ export function VideoPlayer() {
   };
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+  useEffect(() => {
+    if (!showSpeedMenu) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!speedMenuRef.current?.contains(event.target as Node)) {
+        setShowSpeedMenu(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowSpeedMenu(false);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [showSpeedMenu]);
 
   const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!progressRef.current || duration === 0) return;
@@ -141,8 +188,9 @@ export function VideoPlayer() {
                 </div>
                 <p className="text-neutral-400 mb-4">No recording loaded</p>
                 <button
+                  type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-md text-neutral-200 transition-colors border border-emerald-300/20"
+                  className="flex items-center gap-2 rounded-md border border-emerald-300/20 bg-white/5 px-4 py-2 text-neutral-200 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/70"
                 >
                   <FolderOpen className="w-4 h-4" />
                   Open File
@@ -153,22 +201,22 @@ export function VideoPlayer() {
         )}
 
         {showVideo && (
-          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-neutral-950/95 via-neutral-950/70 to-transparent p-4">
-            <div className="flex items-center gap-3">
-              <button
+          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-neutral-950/95 via-neutral-950/70 to-transparent p-3 sm:p-4">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              <ControlIconButton
+                label={isPlaying ? "Pause playback" : "Play recording"}
                 onClick={togglePlay}
-                className="text-white hover:text-emerald-100 transition-colors"
               >
                 {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-              </button>
+              </ControlIconButton>
 
-              <div className="flex items-center gap-3">
-                <button
+              <div className="flex items-center gap-2 sm:gap-3">
+                <ControlIconButton
+                  label={volume === 0 ? "Unmute audio" : "Mute audio"}
                   onClick={handleVolumeToggle}
-                  className="text-white hover:text-emerald-100 transition-colors"
                 >
                   {volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-                </button>
+                </ControlIconButton>
 
                 <div className="flex items-center gap-2">
                   <input
@@ -178,6 +226,7 @@ export function VideoPlayer() {
                     step="0.05"
                     value={volume}
                     onChange={(e) => setVolume(parseFloat(e.target.value))}
+                    aria-label="Volume"
                     className="w-20 h-3 appearance-none cursor-pointer bg-transparent
                             [&::-webkit-slider-thumb]:appearance-none 
                             [&::-webkit-slider-thumb]:w-3 
@@ -190,20 +239,42 @@ export function VideoPlayer() {
                             [&::-webkit-slider-runnable-track]:bg-neutral-600
                             [&::-webkit-slider-runnable-track]:rounded-full"
                   />
-                  <span className="text-xs text-neutral-300 font-mono w-8 text-right">
+                  <span className="w-8 text-right font-mono text-xs text-neutral-200">
                     {Math.round(volume * 100)}%
                   </span>
                 </div>
               </div>
 
-              <span className="text-xs text-white font-mono">
+              <span className="text-xs font-mono text-white">
                 {formatTime(currentTime)} / {formatTime(duration)}
               </span>
 
               <div
                 ref={progressRef}
-                className="group relative h-2 min-w-0 flex-1 cursor-pointer rounded-full bg-neutral-700/80 border border-emerald-300/10"
+                className="group relative order-last h-2 w-full cursor-pointer rounded-full border border-emerald-300/10 bg-neutral-700/80 md:order-none md:min-w-0 md:flex-1"
                 onClick={handleProgressClick}
+                onKeyDown={(event) => {
+                  if (duration <= 0) {
+                    return;
+                  }
+
+                  if (event.key === "ArrowLeft") {
+                    event.preventDefault();
+                    seek(Math.max(0, currentTime - 5));
+                  }
+
+                  if (event.key === "ArrowRight") {
+                    event.preventDefault();
+                    seek(Math.min(duration, currentTime + 5));
+                  }
+                }}
+                role="slider"
+                aria-label="Timeline"
+                aria-valuemin={0}
+                aria-valuemax={Math.max(duration, 0)}
+                aria-valuenow={Math.max(currentTime, 0)}
+                aria-valuetext={`${formatTime(currentTime)} of ${formatTime(duration)}`}
+                tabIndex={0}
               >
                 <div
                   className="h-full rounded-full bg-emerald-400/85 transition-colors"
@@ -215,13 +286,6 @@ export function VideoPlayer() {
                 />
                 {events.map((event) => {
                   const position = duration > 0 ? (event.timestamp / duration) * 100 : 0;
-                  const isDeath = event.type === "death";
-                  const isManual = event.type === "manual";
-                  const markerClassName = isManual
-                    ? "h-2.5 w-2.5 rounded-sm bg-cyan-300"
-                    : isDeath
-                      ? "h-2.5 w-2.5 rounded-full bg-rose-300"
-                      : "h-2.5 w-2.5 rounded-full bg-emerald-200";
                   return (
                     <button
                       key={event.id}
@@ -232,29 +296,37 @@ export function VideoPlayer() {
                         eventClick.stopPropagation();
                         seek(event.timestamp);
                       }}
+                      aria-label={`Seek to marker at ${formatTime(event.timestamp)}`}
                     >
-                      <span className={`block ${markerClassName}`} />
+                      <EventMarker type={event.type} />
                     </button>
                   );
                 })}
               </div>
 
-              <div className="relative">
+              <div ref={speedMenuRef} className="relative">
                 <button
+                  type="button"
                   onClick={() => setShowSpeedMenu(!showSpeedMenu)}
-                  className="text-xs text-neutral-100 hover:text-emerald-200 px-2 py-1 bg-neutral-800 rounded border border-neutral-700 transition-colors"
+                  className="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100 transition-colors hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/70"
+                  aria-haspopup="menu"
+                  aria-expanded={showSpeedMenu}
+                  aria-label="Playback speed"
                 >
                   {playbackRate}x
                 </button>
                 {showSpeedMenu && (
-                  <div className="absolute bottom-full mb-2 left-0 bg-neutral-900 rounded shadow-lg py-1 border border-neutral-700">
+                  <div className="absolute bottom-full left-0 mb-2 rounded border border-neutral-700 bg-neutral-900 py-1 shadow-lg" role="menu" aria-label="Playback speed options">
                     {PLAYBACK_RATES.map((rate) => (
                       <button
                         key={rate}
+                        type="button"
                         onClick={() => {
                           setPlaybackRate(rate);
                           setShowSpeedMenu(false);
                         }}
+                        role="menuitemradio"
+                        aria-checked={playbackRate === rate}
                         className={`block w-full text-left px-3 py-1 text-xs ${
                           playbackRate === rate
                             ? "text-emerald-300 bg-emerald-500/20"
@@ -268,20 +340,19 @@ export function VideoPlayer() {
                 )}
               </div>
 
-              <button
+              <ControlIconButton
+                label="Toggle fullscreen"
                 onClick={toggleFullscreen}
-                className="text-white hover:text-neutral-300 transition-colors"
               >
                 <Maximize className="w-5 h-5" />
-              </button>
+              </ControlIconButton>
 
-              <button
+              <ControlIconButton
+                label="Open video file"
                 onClick={() => fileInputRef.current?.click()}
-                className="text-white hover:text-neutral-300 transition-colors"
-                title="Open Video"
               >
                 <FolderOpen className="w-5 h-5" />
-              </button>
+              </ControlIconButton>
             </div>
           </div>
         )}

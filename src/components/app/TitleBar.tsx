@@ -1,8 +1,8 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { motion, useReducedMotion } from 'motion/react';
 import { Activity, Clapperboard } from 'lucide-react';
-import { useRecording } from '../contexts/RecordingContext';
-import { statusPulseTransition } from '../lib/motion';
+import { useRecording } from '../../contexts/RecordingContext';
+import { statusPulseTransition } from '../../lib/motion';
 
 export function TitleBar() {
   const appWindow = getCurrentWindow();
@@ -38,8 +38,7 @@ export function TitleBar() {
 
   return (
     <div
-      data-tauri-drag-region
-      className="h-10 border-b border-emerald-300/10 bg-[var(--surface-1)] backdrop-blur-md select-none"
+      className="flex h-10 items-stretch justify-between border-b border-emerald-300/10 bg-[var(--surface-1)] backdrop-blur-md select-none"
     >
       <div className="flex h-full items-center gap-3 px-3" data-tauri-drag-region>
         <div className="inline-flex items-center gap-2 rounded-md border border-emerald-300/15 bg-emerald-500/10 px-2 py-1">
@@ -70,29 +69,35 @@ export function TitleBar() {
           </motion.div>
         )}
       </div>
-      <div className="flex h-full">
+      <div className="flex h-full shrink-0">
         <button
+          type="button"
           onClick={handleMinimize}
-          className="w-12 h-full flex items-center justify-center text-neutral-400 hover:bg-white/5 hover:text-neutral-200 transition-colors"
+          className="flex h-full w-12 items-center justify-center text-neutral-400 transition-colors hover:bg-white/5 hover:text-neutral-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60"
           title="Minimize"
+          aria-label="Minimize window"
         >
           <svg width="10" height="1" viewBox="0 0 10 1" fill="currentColor">
             <rect width="10" height="1" />
           </svg>
         </button>
         <button
+          type="button"
           onClick={handleMaximize}
-          className="w-12 h-full flex items-center justify-center text-neutral-400 hover:bg-white/5 hover:text-neutral-200 transition-colors"
+          className="flex h-full w-12 items-center justify-center text-neutral-400 transition-colors hover:bg-white/5 hover:text-neutral-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60"
           title="Maximize"
+          aria-label="Maximize window"
         >
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor">
             <rect x="0.5" y="0.5" width="9" height="9" />
           </svg>
         </button>
         <button
+          type="button"
           onClick={handleClose}
-          className="w-12 h-full flex items-center justify-center text-neutral-400 hover:bg-red-600 hover:text-white transition-colors"
+          className="flex h-full w-12 items-center justify-center text-neutral-400 transition-colors hover:bg-red-600 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/70"
           title="Close"
+          aria-label="Close window"
         >
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor">
             <path d="M1 1L9 9M9 1L1 9" strokeWidth="1.2" />

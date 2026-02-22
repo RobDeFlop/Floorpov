@@ -1,4 +1,4 @@
-import { GameEvent } from "../types/events";
+import { GameEvent } from "../../types/events";
 import { motion, useReducedMotion } from 'motion/react';
 
 interface EventTooltipProps {
