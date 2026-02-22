@@ -1,8 +1,8 @@
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc as std_mpsc;
@@ -10,124 +10,35 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 
-use super::audio_pipeline::{
+use super::super::audio_pipeline::{
     is_expected_audio_disconnect_error, run_audio_queue_to_writer,
     run_system_audio_capture_to_queue,
 };
-use super::ffmpeg::{
+use super::super::ffmpeg::{
     append_runtime_capture_input_args, parse_ffmpeg_speed, resolve_video_filter,
-    select_video_encoder,
 };
 #[cfg(target_os = "windows")]
-use super::model::CREATE_NO_WINDOW;
-use super::model::{
+use super::super::model::CREATE_NO_WINDOW;
+use super::super::model::{
     AudioPipelineStats, CaptureInput, RuntimeCaptureMode, SegmentRunResult, SegmentTransition,
-    SharedRecordingState, WindowCaptureAvailability, WindowCaptureRegion, AUDIO_TCP_ACCEPT_WAIT_MS,
-    FFMPEG_MODE_SWITCH_TO_BLACK_TIMEOUT, FFMPEG_MODE_SWITCH_TO_WINDOW_TIMEOUT, FFMPEG_STOP_TIMEOUT,
-    FFMPEG_TRANSITION_TIMEOUT, SYSTEM_AUDIO_CHANNEL_COUNT, SYSTEM_AUDIO_QUEUE_CAPACITY,
-    SYSTEM_AUDIO_SAMPLE_RATE_HZ, WINDOW_CAPTURE_REGION_CHANGE_DEBOUNCE,
-    WINDOW_CAPTURE_STATUS_POLL_INTERVAL, WINDOW_CAPTURE_UNAVAILABLE_WARNING,
+    WindowCaptureAvailability, WindowCaptureRegion, AUDIO_TCP_ACCEPT_WAIT_MS,
+    SYSTEM_AUDIO_CHANNEL_COUNT, SYSTEM_AUDIO_QUEUE_CAPACITY, SYSTEM_AUDIO_SAMPLE_RATE_HZ,
+    WINDOW_CAPTURE_REGION_CHANGE_DEBOUNCE, WINDOW_CAPTURE_STATUS_POLL_INTERVAL,
+    WINDOW_CAPTURE_UNAVAILABLE_WARNING,
 };
-use super::segments::{
-    build_segment_output_path, cleanup_segment_workspace, create_segment_workspace,
-    finalize_segmented_recording,
+use super::super::window_capture::{
+    evaluate_window_capture_availability, resolve_window_capture_region,
+    warning_message_for_window_capture,
 };
-use super::window_capture::{
-    evaluate_window_capture_availability, resolve_capture_dimensions,
-    resolve_window_capture_region, warning_message_for_window_capture,
+use super::common::{
+    request_ffmpeg_graceful_stop, resolve_stop_timeout, runtime_capture_label,
+    signal_audio_threads_stop, RequestedTransitionKind,
 };
-
-fn to_runtime_capture_mode(capture_input: &CaptureInput) -> RuntimeCaptureMode {
-    match capture_input {
-        CaptureInput::Monitor => RuntimeCaptureMode::Monitor,
-        CaptureInput::Window { .. } => RuntimeCaptureMode::Window,
-    }
-}
-
-fn runtime_capture_label(runtime_capture_mode: RuntimeCaptureMode) -> &'static str {
-    match runtime_capture_mode {
-        RuntimeCaptureMode::Monitor => "monitor",
-        RuntimeCaptureMode::Window => "window",
-        RuntimeCaptureMode::Black => "black",
-    }
-}
-
-#[derive(Clone, Copy)]
-enum RequestedTransitionKind {
-    ModeSwitchToBlack,
-    ModeSwitchToWindow,
-    RegionRetarget,
-}
-
-fn clear_recording_state(state: &SharedRecordingState) {
-    let mut recording_state = state.blocking_write();
-    recording_state.is_recording = false;
-    recording_state.is_stopping = false;
-    recording_state.current_output_path = None;
-    recording_state.stop_tx = None;
-}
-
-fn signal_audio_threads_stop(
-    audio_capture_stop_tx: &Option<std_mpsc::Sender<()>>,
-    audio_writer_stop_tx: &Option<std_mpsc::Sender<()>>,
-) {
-    if let Some(capture_stop_tx) = audio_capture_stop_tx {
-        if let Err(error) = capture_stop_tx.send(()) {
-            tracing::debug!("Audio capture stop signal channel is closed: {error}");
-        }
-    }
-
-    if let Some(writer_stop_tx) = audio_writer_stop_tx {
-        if let Err(error) = writer_stop_tx.send(()) {
-            tracing::debug!("Audio writer stop signal channel is closed: {error}");
-        }
-    }
-}
-
-fn request_ffmpeg_graceful_stop(
-    stop_requested_at: &mut Option<Instant>,
-    child: &mut std::process::Child,
-    audio_capture_stop_tx: &Option<std_mpsc::Sender<()>>,
-    audio_writer_stop_tx: &Option<std_mpsc::Sender<()>>,
-) {
-    if stop_requested_at.is_none() {
-        *stop_requested_at = Some(Instant::now());
-        signal_audio_threads_stop(audio_capture_stop_tx, audio_writer_stop_tx);
-
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(b"q\n");
-            let _ = stdin.flush();
-        }
-    }
-}
-
-fn emit_recording_stopped(app_handle: &AppHandle) {
-    if let Err(error) = app_handle.emit("recording-stopped", ()) {
-        tracing::error!("Failed to emit recording-stopped event: {error}");
-    }
-}
-
-fn emit_recording_finalized(app_handle: &AppHandle, output_path: &str) {
-    if let Err(error) = app_handle.emit("recording-finalized", output_path) {
-        tracing::error!("Failed to emit recording-finalized event: {error}");
-    }
-}
-
-fn emit_recording_warning(app_handle: &AppHandle, warning_message: &str) {
-    if let Err(error) = app_handle.emit("recording-warning", warning_message.to_string()) {
-        tracing::error!("Failed to emit recording-warning event: {error}");
-    }
-}
-
-fn emit_recording_warning_cleared(app_handle: &AppHandle) {
-    if let Err(error) = app_handle.emit("recording-warning-cleared", ()) {
-        tracing::error!("Failed to emit recording-warning-cleared event: {error}");
-    }
-}
+use super::events::{emit_recording_warning, emit_recording_warning_cleared};
 
 fn segment_result_for_capture_input_error(
     app_handle: &AppHandle,
@@ -163,7 +74,7 @@ fn segment_result_for_capture_input_error(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_ffmpeg_recording_segment(
+pub(super) fn run_ffmpeg_recording_segment(
     app_handle: &AppHandle,
     ffmpeg_binary_path: &Path,
     runtime_capture_mode: RuntimeCaptureMode,
@@ -531,20 +442,8 @@ fn run_ffmpeg_recording_segment(
         }
 
         if let Some(requested_at) = stop_requested_at {
-            let stop_timeout = if !stop_requested_by_user {
-                match requested_transition_kind {
-                    Some(RequestedTransitionKind::ModeSwitchToBlack) => {
-                        FFMPEG_MODE_SWITCH_TO_BLACK_TIMEOUT
-                    }
-                    Some(RequestedTransitionKind::ModeSwitchToWindow) => {
-                        FFMPEG_MODE_SWITCH_TO_WINDOW_TIMEOUT
-                    }
-                    Some(RequestedTransitionKind::RegionRetarget) => FFMPEG_TRANSITION_TIMEOUT,
-                    None => FFMPEG_STOP_TIMEOUT,
-                }
-            } else {
-                FFMPEG_STOP_TIMEOUT
-            };
+            let stop_timeout =
+                resolve_stop_timeout(stop_requested_by_user, requested_transition_kind);
 
             if !kill_sent && requested_at.elapsed() >= stop_timeout {
                 if let Err(error) = child.kill() {
@@ -842,183 +741,4 @@ fn run_ffmpeg_recording_segment(
         ffmpeg_succeeded: ffmpeg_completed_successfully,
         output_written,
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_ffmpeg_recording_task(
-    app_handle: AppHandle,
-    state: SharedRecordingState,
-    output_path: String,
-    ffmpeg_binary_path: PathBuf,
-    requested_frame_rate: u32,
-    output_frame_rate: u32,
-    bitrate: u32,
-    capture_input: CaptureInput,
-    include_system_audio: bool,
-    enable_diagnostics: bool,
-    mut stop_rx: mpsc::Receiver<()>,
-) {
-    thread::spawn(move || {
-        let (video_encoder, encoder_preset) = select_video_encoder(&ffmpeg_binary_path);
-        let mut runtime_capture_mode = to_runtime_capture_mode(&capture_input);
-        let capture_target = capture_input.target_label();
-        let (capture_width, capture_height) = resolve_capture_dimensions(&capture_input);
-
-        if matches!(runtime_capture_mode, RuntimeCaptureMode::Window) {
-            let initial_availability = evaluate_window_capture_availability(&capture_input);
-            let mut startup_warning: Option<&str> = None;
-
-            if initial_availability != WindowCaptureAvailability::Available {
-                runtime_capture_mode = RuntimeCaptureMode::Black;
-                startup_warning = warning_message_for_window_capture(initial_availability);
-            } else if let Err(error) = resolve_window_capture_region(&capture_input) {
-                tracing::warn!("Failed to resolve initial window capture region: {error}");
-                runtime_capture_mode = RuntimeCaptureMode::Black;
-                startup_warning = Some(WINDOW_CAPTURE_UNAVAILABLE_WARNING);
-            }
-
-            if matches!(runtime_capture_mode, RuntimeCaptureMode::Black) {
-                emit_recording_warning(
-                    &app_handle,
-                    startup_warning.unwrap_or(WINDOW_CAPTURE_UNAVAILABLE_WARNING),
-                );
-            }
-        }
-
-        let segment_workspace = if matches!(capture_input, CaptureInput::Window { .. }) {
-            match create_segment_workspace(&output_path) {
-                Ok(workspace) => Some(workspace),
-                Err(error) => {
-                    tracing::error!("{error}");
-                    clear_recording_state(&state);
-                    emit_recording_stopped(&app_handle);
-                    return;
-                }
-            }
-        } else {
-            None
-        };
-
-        tracing::info!(
-            ffmpeg_path = %ffmpeg_binary_path.display(),
-            requested_frame_rate,
-            output_frame_rate,
-            bitrate,
-            capture_source = runtime_capture_label(runtime_capture_mode),
-            capture_target = %capture_target,
-            include_system_audio,
-            enable_diagnostics,
-            video_encoder,
-            "Starting FFmpeg recording"
-        );
-
-        let mut segment_paths: Vec<PathBuf> = Vec::new();
-        let mut segment_index: usize = 0;
-        let mut consecutive_segment_failures = 0u32;
-
-        loop {
-            let segment_output_path = if let Some(workspace) = &segment_workspace {
-                build_segment_output_path(workspace, segment_index)
-            } else {
-                PathBuf::from(&output_path)
-            };
-
-            let run_result = run_ffmpeg_recording_segment(
-                &app_handle,
-                &ffmpeg_binary_path,
-                runtime_capture_mode,
-                &capture_input,
-                &segment_output_path,
-                requested_frame_rate,
-                output_frame_rate,
-                bitrate,
-                include_system_audio,
-                enable_diagnostics,
-                &video_encoder,
-                encoder_preset.as_deref(),
-                capture_width,
-                capture_height,
-                &mut stop_rx,
-            );
-
-            if run_result.output_written {
-                segment_paths.push(segment_output_path);
-            }
-
-            if run_result.ffmpeg_succeeded {
-                consecutive_segment_failures = 0;
-            } else if matches!(run_result.transition, SegmentTransition::Switch(_)) {
-                tracing::debug!(
-                    runtime_capture_mode = runtime_capture_label(runtime_capture_mode),
-                    "Ignoring non-zero FFmpeg exit for expected capture transition"
-                );
-            } else {
-                consecutive_segment_failures = consecutive_segment_failures.saturating_add(1);
-            }
-
-            if consecutive_segment_failures >= 3 {
-                tracing::error!(
-                    runtime_capture_mode = runtime_capture_label(runtime_capture_mode),
-                    "Stopping recording after repeated FFmpeg segment failures"
-                );
-                break;
-            }
-
-            match run_result.transition {
-                SegmentTransition::Stop => {
-                    break;
-                }
-                SegmentTransition::Switch(next_runtime_capture_mode) => {
-                    runtime_capture_mode = next_runtime_capture_mode;
-                    segment_index = segment_index.saturating_add(1);
-                }
-                SegmentTransition::RestartSameMode => {
-                    if matches!(runtime_capture_mode, RuntimeCaptureMode::Monitor) {
-                        break;
-                    }
-                    segment_index = segment_index.saturating_add(1);
-                    thread::sleep(Duration::from_millis(100));
-                }
-            }
-        }
-
-        let finalized_successfully = if let Some(workspace) = &segment_workspace {
-            let finalize_result = finalize_segmented_recording(
-                &ffmpeg_binary_path,
-                workspace,
-                &segment_paths,
-                &output_path,
-            );
-
-            let was_successful = match finalize_result {
-                Ok(()) => true,
-                Err(error) => {
-                    if !segment_paths.is_empty() {
-                        tracing::error!("Failed to finalize segmented recording: {error}");
-                    } else {
-                        tracing::warn!("No recording segments were produced before stop");
-                    }
-                    false
-                }
-            };
-
-            cleanup_segment_workspace(workspace);
-            was_successful
-        } else {
-            let output_file = Path::new(&output_path);
-            output_file.exists()
-                && output_file
-                    .metadata()
-                    .map(|metadata| metadata.len() > 0)
-                    .unwrap_or(false)
-        };
-
-        if finalized_successfully {
-            emit_recording_finalized(&app_handle, &output_path);
-        }
-
-        emit_recording_warning_cleared(&app_handle);
-        clear_recording_state(&state);
-        emit_recording_stopped(&app_handle);
-    });
 }
