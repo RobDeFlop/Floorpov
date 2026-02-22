@@ -1,5 +1,6 @@
 mod audio_pipeline;
 mod ffmpeg;
+pub(crate) mod metadata;
 mod model;
 mod segments;
 mod session;

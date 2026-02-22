@@ -6,6 +6,19 @@ export interface GameEvent {
   target?: string;
 }
 
+export interface RecordingImportantEventMetadata {
+  timestampSeconds: number;
+  eventType: string;
+  source?: string;
+  target?: string;
+}
+
+export interface RecordingMetadata {
+  schemaVersion: number;
+  recordingFile: string;
+  importantEvents?: RecordingImportantEventMetadata[];
+}
+
 export interface CombatEvent {
   timestamp: number;
   eventType: string;
@@ -34,11 +47,50 @@ export interface ParseCombatLogDebugResult {
   truncated: boolean;
 }
 
+const SUPPORTED_PLAYBACK_EVENT_TYPES = new Set(["PARTY_KILL", "UNIT_DIED", "MANUAL_MARKER"]);
+
+function mapEventTypeToGameEventType(eventType: string): GameEvent["type"] {
+  if (eventType === "PARTY_KILL") {
+    return "kill";
+  }
+
+  if (eventType === "UNIT_DIED") {
+    return "death";
+  }
+
+  return "manual";
+}
+
+export function convertRecordingMetadataToGameEvents(
+  metadata: RecordingMetadata | null,
+): GameEvent[] {
+  if (!metadata?.importantEvents?.length) {
+    return [];
+  }
+
+  return metadata.importantEvents
+    .flatMap((importantEvent, index) => {
+      if (!SUPPORTED_PLAYBACK_EVENT_TYPES.has(importantEvent.eventType)) {
+        return [];
+      }
+
+      if (!Number.isFinite(importantEvent.timestampSeconds) || importantEvent.timestampSeconds < 0) {
+        return [];
+      }
+
+      return [{
+        id: `${importantEvent.eventType}-${importantEvent.timestampSeconds}-${index}`,
+        timestamp: importantEvent.timestampSeconds,
+        type: mapEventTypeToGameEventType(importantEvent.eventType),
+        source: importantEvent.source,
+        target: importantEvent.target,
+      }];
+    })
+    .sort((a, b) => a.timestamp - b.timestamp);
+}
+
 export function convertCombatEvent(combatEvent: CombatEvent): GameEvent {
-  const type = 
-    combatEvent.eventType === "PARTY_KILL" ? "kill" :
-    combatEvent.eventType === "UNIT_DIED" ? "death" :
-    "manual";
+  const type = mapEventTypeToGameEventType(combatEvent.eventType);
 
   return {
     id: `${combatEvent.timestamp}-${combatEvent.eventType}`,

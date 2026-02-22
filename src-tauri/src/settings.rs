@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::recording::metadata as recording_metadata;
+
 fn default_capture_source() -> String {
     "monitor".to_string()
 }
@@ -66,6 +68,12 @@ pub struct RecordingInfo {
     pub file_path: String,
     pub size_bytes: u64,
     pub created_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zone_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encounter_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encounter_category: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -115,6 +123,18 @@ pub fn get_recordings_list(folder_path: String) -> Result<Vec<RecordingInfo>, St
 }
 
 #[tauri::command]
+pub fn get_recording_metadata(
+    file_path: String,
+) -> Result<Option<recording_metadata::RecordingMetadata>, String> {
+    let recording_path = Path::new(&file_path);
+    if recording_path.extension().and_then(|value| value.to_str()) != Some("mp4") {
+        return Err("Only .mp4 recordings are supported".to_string());
+    }
+
+    recording_metadata::read_recording_metadata(recording_path)
+}
+
+#[tauri::command]
 pub fn delete_recording(file_path: String) -> Result<(), String> {
     let path = Path::new(&file_path);
 
@@ -130,7 +150,17 @@ pub fn delete_recording(file_path: String) -> Result<(), String> {
         return Err("Only .mp4 recordings can be deleted".to_string());
     }
 
-    std::fs::remove_file(path).map_err(|error| format!("Failed to delete recording: {error}"))
+    std::fs::remove_file(path).map_err(|error| format!("Failed to delete recording: {error}"))?;
+
+    if let Err(error) = recording_metadata::delete_recording_metadata(path) {
+        tracing::warn!(
+            recording_path = %path.display(),
+            metadata_error = %error,
+            "Recording file deleted but metadata cleanup failed"
+        );
+    }
+
+    Ok(())
 }
 
 fn read_recordings_list(folder_path: &str) -> Result<Vec<RecordingInfo>, String> {
@@ -154,11 +184,36 @@ fn read_recordings_list(folder_path: &str) -> Result<Vec<RecordingInfo>, String>
                 .map_err(|e| e.to_string())?
                 .as_secs();
 
+            let sidecar_metadata = match recording_metadata::read_recording_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    tracing::warn!(
+                        recording_path = %path.display(),
+                        metadata_error = %error,
+                        "Failed to read recording metadata sidecar"
+                    );
+                    None
+                }
+            };
+            let (zone_name, encounter_name, encounter_category) =
+                if let Some(metadata) = sidecar_metadata {
+                    (
+                        metadata.zone_name,
+                        metadata.encounter_name,
+                        metadata.encounter_category,
+                    )
+                } else {
+                    (None, None, None)
+                };
+
             recordings.push(RecordingInfo {
                 filename: path.file_name().unwrap().to_string_lossy().to_string(),
                 file_path: path.to_string_lossy().to_string(),
                 size_bytes: metadata.len(),
                 created_at,
+                zone_name,
+                encounter_name,
+                encounter_category,
             });
         }
     }
@@ -195,9 +250,9 @@ pub fn cleanup_old_recordings(
 
     while current_size - freed_bytes > target_size && recordings.len() > 1 {
         let oldest = recordings.remove(0);
-        let file_path = Path::new(&folder_path).join(&oldest.filename);
+        let file_path = Path::new(&oldest.file_path);
 
-        if let Err(e) = std::fs::remove_file(&file_path) {
+        if let Err(e) = std::fs::remove_file(file_path) {
             tracing::warn!(
                 filename = %oldest.filename,
                 path = %file_path.display(),
@@ -205,6 +260,15 @@ pub fn cleanup_old_recordings(
                 "Failed to delete old recording during cleanup"
             );
             continue;
+        }
+
+        if let Err(error) = recording_metadata::delete_recording_metadata(file_path) {
+            tracing::warn!(
+                filename = %oldest.filename,
+                path = %file_path.display(),
+                metadata_error = %error,
+                "Failed to delete recording metadata during cleanup"
+            );
         }
 
         freed_bytes += oldest.size_bytes;

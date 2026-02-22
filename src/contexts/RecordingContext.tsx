@@ -4,7 +4,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { useSettings } from "./SettingsContext";
 import { useMarker } from "./MarkerContext";
 import { QUALITY_SETTINGS } from "../types/settings";
-import { convertCombatEvent, CombatEvent } from "../types/events";
+import {
+  convertCombatEvent,
+  convertRecordingMetadataToGameEvents,
+  CombatEvent,
+  RecordingMetadata,
+} from "../types/events";
 
 interface RecordingStartedPayload {
   output_path: string;
@@ -40,6 +45,7 @@ interface RecordingContextType {
   captureHeight: number;
   recordingPath: string | null;
   recordingDuration: number;
+  loadPlaybackMetadata: (filePath: string) => Promise<void>;
   startPreview: () => Promise<void>;
   stopPreview: () => Promise<void>;
   startRecording: () => Promise<void>;
@@ -58,7 +64,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [recordingStartTime, setRecordingStartTime] = useState<number | null>(null);
   const { settings } = useSettings();
-  const { addEvent, clearEvents } = useMarker();
+  const { addEvent, setEvents, clearEvents } = useMarker();
 
   const waitForEvent = async (eventName: string, timeoutMs: number): Promise<boolean> => {
     return new Promise((resolve) => {
@@ -178,6 +184,29 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     return Promise.resolve();
   };
 
+  const loadPlaybackMetadata = async (filePath: string) => {
+    if (isRecording) {
+      return;
+    }
+
+    const normalizedPath = filePath.trim();
+    if (!normalizedPath) {
+      setEvents([]);
+      return;
+    }
+
+    try {
+      const metadata = await invoke<RecordingMetadata | null>("get_recording_metadata", {
+        filePath: normalizedPath,
+      });
+
+      setEvents(convertRecordingMetadataToGameEvents(metadata));
+    } catch (error) {
+      console.warn("Failed to load recording metadata. Falling back to no markers.", error);
+      setEvents([]);
+    }
+  };
+
   const startRecording = async () => {
     setLastError(null);
     setRecordingWarning(null);
@@ -219,7 +248,10 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
           });
 
           if (wowFolderIsValid) {
-            await invoke("start_combat_watch", { wowFolder: settings.wowFolder });
+            await invoke("start_combat_watch", {
+              wowFolder: settings.wowFolder,
+              recordingOutputPath: result.output_path,
+            });
           }
         } catch (error) {
           console.warn("Failed to start combat watch, continuing recording:", error);
@@ -283,6 +315,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         captureHeight,
         recordingPath,
         recordingDuration,
+        loadPlaybackMetadata,
         startPreview,
         stopPreview,
         startRecording,

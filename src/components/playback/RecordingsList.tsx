@@ -14,6 +14,9 @@ interface RecordingInfo {
   file_path: string;
   size_bytes: number;
   created_at: number;
+  zone_name?: string;
+  encounter_name?: string;
+  encounter_category?: string;
 }
 
 function formatBytes(bytes: number): string {
@@ -30,7 +33,7 @@ function formatDate(timestampSeconds: number): string {
 export function RecordingsList() {
   const { settings } = useSettings();
   const { loadVideo, videoSrc, isVideoLoading } = useVideo();
-  const { isRecording } = useRecording();
+  const { isRecording, loadPlaybackMetadata } = useRecording();
   const reduceMotion = useReducedMotion();
   const [recordings, setRecordings] = useState<RecordingInfo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -88,6 +91,8 @@ export function RecordingsList() {
     setError(null);
 
     try {
+      await loadPlaybackMetadata(recording.file_path);
+
       const recordingSource = convertFileSrc(recording.file_path);
       console.log('[RecordingsList] Loading recording', {
         filename: recording.filename,
@@ -101,7 +106,14 @@ export function RecordingsList() {
     } finally {
       setLoadingRecordingPath(null);
     }
-  }, [isDeletingRecordings, isRecording, isVideoLoading, loadVideo, loadingRecordingPath]);
+  }, [
+    isDeletingRecordings,
+    isRecording,
+    isVideoLoading,
+    loadPlaybackMetadata,
+    loadVideo,
+    loadingRecordingPath,
+  ]);
 
   const {
     selectedRecordingPathSet,

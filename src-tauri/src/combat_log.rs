@@ -10,6 +10,11 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use crate::recording::metadata::{
+    RecordingEncounterSnapshot, RecordingImportantEventMetadata, RecordingMetadata,
+    RecordingMetadataSnapshot,
+};
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CombatEvent {
@@ -20,6 +25,10 @@ pub struct CombatEvent {
 }
 
 const MAX_DEBUG_EVENTS: usize = 2_000;
+const MAX_PERSISTED_HIGH_VOLUME_EVENTS: usize = 20_000;
+const EVENT_MANUAL_MARKER: &str = "MANUAL_MARKER";
+const EVENT_ENCOUNTER_START: &str = "ENCOUNTER_START";
+const EVENT_ENCOUNTER_END: &str = "ENCOUNTER_END";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +58,8 @@ pub struct ParseCombatLogDebugResult {
 struct WatchState {
     handle: Option<JoinHandle<()>>,
     start_time: Instant,
+    recording_output_path: Option<PathBuf>,
+    metadata_accumulator: Arc<Mutex<RecordingMetadataAccumulator>>,
 }
 
 lazy_static::lazy_static! {
@@ -56,7 +67,11 @@ lazy_static::lazy_static! {
 }
 
 #[tauri::command]
-pub async fn start_combat_watch(app_handle: AppHandle, wow_folder: String) -> Result<(), String> {
+pub async fn start_combat_watch(
+    app_handle: AppHandle,
+    wow_folder: String,
+    recording_output_path: Option<String>,
+) -> Result<(), String> {
     let mut state = WATCH_STATE.lock().map_err(|error| error.to_string())?;
 
     if state.is_some() {
@@ -79,6 +94,8 @@ pub async fn start_combat_watch(app_handle: AppHandle, wow_folder: String) -> Re
     let app_handle_clone = app_handle.clone();
     let log_path_clone = log_path.clone();
     let start_time = Instant::now();
+    let metadata_accumulator = Arc::new(Mutex::new(RecordingMetadataAccumulator::default()));
+    let metadata_accumulator_clone = Arc::clone(&metadata_accumulator);
 
     let handle = tokio::spawn(async move {
         if let Err(error) = watch_combat_log(
@@ -86,6 +103,7 @@ pub async fn start_combat_watch(app_handle: AppHandle, wow_folder: String) -> Re
             &log_path_clone,
             initial_offset,
             start_time,
+            metadata_accumulator_clone,
         )
         .await
         {
@@ -96,9 +114,18 @@ pub async fn start_combat_watch(app_handle: AppHandle, wow_folder: String) -> Re
     *state = Some(WatchState {
         handle: Some(handle),
         start_time,
+        recording_output_path: normalized_output_recording_path(recording_output_path.as_deref()),
+        metadata_accumulator,
     });
 
     Ok(())
+}
+
+fn normalized_output_recording_path(recording_output_path: Option<&str>) -> Option<PathBuf> {
+    recording_output_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 #[tauri::command]
@@ -106,12 +133,31 @@ pub async fn stop_combat_watch() -> Result<(), String> {
     let mut state = WATCH_STATE.lock().map_err(|error| error.to_string())?;
 
     if let Some(watch_state) = state.take() {
-        if let Some(handle) = watch_state.handle {
+        if let Some(handle) = watch_state.handle.as_ref() {
             handle.abort();
         }
+
+        persist_watch_metadata_if_configured(&watch_state);
     }
 
     Ok(())
+}
+
+fn persist_watch_metadata_if_configured(watch_state: &WatchState) {
+    let Some(recording_output_path) = watch_state.recording_output_path.as_deref() else {
+        return;
+    };
+
+    if let Err(error) = persist_recording_metadata_snapshot(
+        recording_output_path,
+        &watch_state.metadata_accumulator,
+    ) {
+        tracing::warn!(
+            recording_path = %recording_output_path.display(),
+            metadata_error = %error,
+            "Failed to persist combat metadata sidecar"
+        );
+    }
 }
 
 #[tauri::command]
@@ -134,16 +180,36 @@ pub async fn emit_manual_marker(app_handle: AppHandle) -> Result<(), String> {
         let elapsed = watch_state.start_time.elapsed().as_secs_f64();
         let event = CombatEvent {
             timestamp: elapsed,
-            event_type: "MANUAL_MARKER".to_string(),
+            event_type: EVENT_MANUAL_MARKER.to_string(),
             source: None,
             target: None,
         };
 
-        let _ = app_handle.emit("combat-event", &event);
+        match watch_state.metadata_accumulator.lock() {
+            Ok(mut metadata_accumulator) => metadata_accumulator.record_manual_marker(elapsed),
+            Err(error) => {
+                tracing::error!(
+                    metadata_error = %error,
+                    "Failed to lock metadata accumulator for manual marker"
+                );
+            }
+        }
+
+        emit_combat_event(&app_handle, &event);
         return Ok(());
     }
 
     Err("Combat watch not running".to_string())
+}
+
+fn emit_combat_event(app_handle: &AppHandle, event: &CombatEvent) {
+    if let Err(error) = app_handle.emit("combat-event", event) {
+        tracing::warn!(
+            event_type = %event.event_type,
+            emit_error = %error,
+            "Failed to emit combat event"
+        );
+    }
 }
 
 #[tauri::command]
@@ -259,12 +325,15 @@ async fn watch_combat_log(
     log_path: &Path,
     initial_offset: u64,
     start_time: Instant,
+    metadata_accumulator: Arc<Mutex<RecordingMetadataAccumulator>>,
 ) -> Result<(), String> {
     let (notify_sender, mut notify_receiver) =
         mpsc::unbounded_channel::<Result<Event, notify::Error>>();
 
     let mut watcher = notify::recommended_watcher(move |result| {
-        let _ = notify_sender.send(result);
+        if notify_sender.send(result).is_err() {
+            tracing::debug!("Combat log watcher notification receiver dropped");
+        }
     })
     .map_err(|error| error.to_string())?;
 
@@ -283,9 +352,13 @@ async fn watch_combat_log(
                     continue;
                 }
 
-                if let Err(error) =
-                    read_and_emit_new_events(&app_handle, log_path, &mut file_offset, start_time)
-                {
+                if let Err(error) = read_and_emit_new_events(
+                    &app_handle,
+                    log_path,
+                    &mut file_offset,
+                    start_time,
+                    &metadata_accumulator,
+                ) {
                     tracing::warn!("Failed to parse combat log update: {error}");
                 }
             }
@@ -322,6 +395,7 @@ fn read_and_emit_new_events(
     log_path: &Path,
     file_offset: &mut u64,
     start_time: Instant,
+    metadata_accumulator: &Arc<Mutex<RecordingMetadataAccumulator>>,
 ) -> Result<(), String> {
     let mut file = File::open(log_path).map_err(|error| error.to_string())?;
     let file_length = file.metadata().map_err(|error| error.to_string())?.len();
@@ -346,80 +420,73 @@ fn read_and_emit_new_events(
         }
 
         *file_offset = file_offset.saturating_add(bytes_read as u64);
-        if let Some(event) = parse_combat_log_line(&line, start_time.elapsed().as_secs_f64()) {
-            let _ = app_handle.emit("combat-event", event);
+        let elapsed_seconds = start_time.elapsed().as_secs_f64();
+        let parsed_event = {
+            let mut accumulator = metadata_accumulator
+                .lock()
+                .map_err(|error| error.to_string())?;
+            accumulator.consume_combat_log_line(&line, elapsed_seconds)
+        };
+
+        if let Some(event) = parsed_event.and_then(|value| value.into_live_event(elapsed_seconds)) {
+            emit_combat_event(app_handle, &event);
         }
     }
 
     Ok(())
 }
 
-fn parse_combat_log_line(line: &str, elapsed_seconds: f64) -> Option<CombatEvent> {
-    let parsed_line = parse_log_line_fields(line)?;
-    if is_guardian_target(parsed_line.target_kind.as_deref()) {
-        return None;
-    }
-
-    let normalized_event_type = match parsed_line.normalized_event_type.as_str() {
-        "PARTY_KILL" => "PARTY_KILL",
-        "UNIT_DIED" => "UNIT_DIED",
-        _ => return None,
-    };
-
-    Some(CombatEvent {
-        timestamp: elapsed_seconds,
-        event_type: normalized_event_type.to_string(),
-        source: parsed_line.source,
-        target: parsed_line.target,
-    })
+#[derive(Debug, Clone)]
+struct ImportantCombatEvent {
+    log_timestamp: Option<String>,
+    event_type: String,
+    source: Option<String>,
+    target: Option<String>,
+    target_kind: Option<String>,
+    zone_name: Option<String>,
+    encounter_name: Option<String>,
+    encounter_category: Option<String>,
 }
 
-fn parse_important_log_line(
+impl ImportantCombatEvent {
+    fn into_live_event(self, elapsed_seconds: f64) -> Option<CombatEvent> {
+        match self.event_type.as_str() {
+            "PARTY_KILL" | "UNIT_DIED" => Some(CombatEvent {
+                timestamp: elapsed_seconds,
+                event_type: self.event_type,
+                source: self.source,
+                target: self.target,
+            }),
+            _ => None,
+        }
+    }
+}
+
+fn parse_important_combat_event(
     line: &str,
-    line_number: u64,
     context: &mut DebugParseContext,
-) -> Option<ParsedCombatEvent> {
+) -> Option<ImportantCombatEvent> {
     let parsed_line = parse_log_line_fields(line)?;
 
     update_debug_context(context, &parsed_line);
-
-    if is_context_only_event(&parsed_line.raw_event_type) {
-        return None;
-    }
 
     if let Some(zone_name) = extract_zone_name(&parsed_line.raw_event_type, &parsed_line.fields) {
         context.current_zone = Some(zone_name);
     }
 
-    let mut encounter_name = context.current_encounter.clone();
-    let mut encounter_category = context.current_encounter_category.clone();
-    if parsed_line.raw_event_type == "ENCOUNTER_START" {
-        if let Some(new_encounter_name) = extract_encounter_name(&parsed_line.fields) {
-            context.current_encounter = Some(new_encounter_name.clone());
-            encounter_name = Some(new_encounter_name);
-        }
-        let category = classify_encounter_category(context, &parsed_line.fields);
-        context.current_encounter_category = Some(category.to_string());
-        encounter_category = context.current_encounter_category.clone();
-    } else if parsed_line.raw_event_type == "ENCOUNTER_END" {
-        if let Some(finished_encounter_name) = extract_encounter_name(&parsed_line.fields) {
-            encounter_name = Some(finished_encounter_name);
-        }
-        if encounter_category.is_none() {
-            encounter_category =
-                Some(classify_encounter_category(context, &parsed_line.fields).to_string());
-        }
-        context.current_encounter = None;
-        context.current_encounter_category = None;
+    let (encounter_name, encounter_category) =
+        resolve_encounter_state_for_event(context, &parsed_line);
+
+    if is_context_only_event(&parsed_line.raw_event_type) {
+        return None;
     }
 
     if is_guardian_target(parsed_line.target_kind.as_deref()) {
         return None;
     }
 
-    Some(ParsedCombatEvent {
-        line_number,
-        log_timestamp: parsed_line.log_timestamp,
+    Some(ImportantCombatEvent {
+        log_timestamp: Some(parsed_line.log_timestamp),
         event_type: parsed_line.normalized_event_type,
         source: parsed_line.source,
         target: parsed_line.target,
@@ -430,6 +497,60 @@ fn parse_important_log_line(
     })
 }
 
+fn resolve_encounter_state_for_event(
+    context: &mut DebugParseContext,
+    parsed_line: &ParsedLogLine,
+) -> (Option<String>, Option<String>) {
+    let mut encounter_name = context.current_encounter.clone();
+    let mut encounter_category = context.current_encounter_category.clone();
+
+    match parsed_line.raw_event_type.as_str() {
+        EVENT_ENCOUNTER_START => {
+            if let Some(new_encounter_name) = extract_encounter_name(&parsed_line.fields) {
+                context.current_encounter = Some(new_encounter_name.clone());
+                encounter_name = Some(new_encounter_name);
+            }
+            let category = classify_encounter_category(context, &parsed_line.fields).to_string();
+            context.current_encounter_category = Some(category.clone());
+            encounter_category = Some(category);
+        }
+        EVENT_ENCOUNTER_END => {
+            if let Some(finished_encounter_name) = extract_encounter_name(&parsed_line.fields) {
+                encounter_name = Some(finished_encounter_name);
+            }
+            if encounter_category.is_none() {
+                encounter_category =
+                    Some(classify_encounter_category(context, &parsed_line.fields).to_string());
+            }
+            context.current_encounter = None;
+            context.current_encounter_category = None;
+        }
+        _ => {}
+    }
+
+    (encounter_name, encounter_category)
+}
+
+fn parse_important_log_line(
+    line: &str,
+    line_number: u64,
+    context: &mut DebugParseContext,
+) -> Option<ParsedCombatEvent> {
+    let parsed_event = parse_important_combat_event(line, context)?;
+
+    Some(ParsedCombatEvent {
+        line_number,
+        log_timestamp: parsed_event.log_timestamp.unwrap_or_default(),
+        event_type: parsed_event.event_type,
+        source: parsed_event.source,
+        target: parsed_event.target,
+        target_kind: parsed_event.target_kind,
+        zone_name: parsed_event.zone_name,
+        encounter_name: parsed_event.encounter_name,
+        encounter_category: parsed_event.encounter_category,
+    })
+}
+
 #[derive(Debug, Default)]
 struct DebugParseContext {
     current_zone: Option<String>,
@@ -437,6 +558,208 @@ struct DebugParseContext {
     current_encounter_category: Option<String>,
     in_challenge_mode: bool,
     in_pvp_match: bool,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct RecordingMetadataAccumulator {
+    context: DebugParseContext,
+    zone_name: Option<String>,
+    latest_encounter_name: Option<String>,
+    latest_encounter_category: Option<String>,
+    active_encounters: BTreeMap<String, usize>,
+    encounters: Vec<RecordingEncounterSnapshot>,
+    important_events: Vec<RecordingImportantEventMetadata>,
+    important_event_counts: BTreeMap<String, u64>,
+    important_events_dropped_count: u64,
+    high_volume_events_in_buffer: usize,
+}
+
+impl RecordingMetadataAccumulator {
+    fn consume_combat_log_line(
+        &mut self,
+        line: &str,
+        elapsed_seconds: f64,
+    ) -> Option<ImportantCombatEvent> {
+        let parsed_event = parse_important_combat_event(line, &mut self.context)?;
+        self.record_important_event(&parsed_event, elapsed_seconds);
+        Some(parsed_event)
+    }
+
+    fn record_manual_marker(&mut self, elapsed_seconds: f64) {
+        let manual_event = ImportantCombatEvent {
+            log_timestamp: None,
+            event_type: EVENT_MANUAL_MARKER.to_string(),
+            source: None,
+            target: None,
+            target_kind: None,
+            zone_name: self.zone_name.clone(),
+            encounter_name: self.latest_encounter_name.clone(),
+            encounter_category: self.latest_encounter_category.clone(),
+        };
+        self.record_important_event(&manual_event, elapsed_seconds);
+    }
+
+    fn record_important_event(&mut self, event: &ImportantCombatEvent, elapsed_seconds: f64) {
+        *self
+            .important_event_counts
+            .entry(event.event_type.clone())
+            .or_insert(0) += 1;
+
+        update_option_if_some(&mut self.zone_name, event.zone_name.as_ref());
+        update_option_if_some(
+            &mut self.latest_encounter_name,
+            event.encounter_name.as_ref(),
+        );
+        update_option_if_some(
+            &mut self.latest_encounter_category,
+            event.encounter_category.as_ref(),
+        );
+
+        match event.event_type.as_str() {
+            EVENT_ENCOUNTER_START => self.record_encounter_start(event, elapsed_seconds),
+            EVENT_ENCOUNTER_END => self.record_encounter_end(event, elapsed_seconds),
+            _ => {}
+        }
+
+        self.push_event_with_cap(RecordingImportantEventMetadata {
+            timestamp_seconds: elapsed_seconds,
+            log_timestamp: event.log_timestamp.clone(),
+            event_type: event.event_type.clone(),
+            source: event.source.clone(),
+            target: event.target.clone(),
+            zone_name: event.zone_name.clone(),
+            encounter_name: event.encounter_name.clone(),
+            encounter_category: event.encounter_category.clone(),
+        });
+    }
+
+    fn record_encounter_start(&mut self, event: &ImportantCombatEvent, elapsed_seconds: f64) {
+        let Some((encounter_name, encounter_category)) = encounter_identity(event) else {
+            return;
+        };
+
+        let encounter_key = encounter_key(&encounter_name, &encounter_category);
+        let index = self.encounters.len();
+        self.encounters.push(RecordingEncounterSnapshot {
+            name: encounter_name,
+            category: encounter_category,
+            started_at_seconds: elapsed_seconds,
+            ended_at_seconds: None,
+        });
+        self.active_encounters.insert(encounter_key, index);
+    }
+
+    fn record_encounter_end(&mut self, event: &ImportantCombatEvent, elapsed_seconds: f64) {
+        let Some((encounter_name, encounter_category)) = encounter_identity(event) else {
+            return;
+        };
+
+        let encounter_key = encounter_key(&encounter_name, &encounter_category);
+        if let Some(index) = self.active_encounters.remove(&encounter_key) {
+            if let Some(encounter) = self.encounters.get_mut(index) {
+                encounter.ended_at_seconds = Some(elapsed_seconds);
+            }
+            return;
+        }
+
+        self.encounters.push(RecordingEncounterSnapshot {
+            name: encounter_name,
+            category: encounter_category,
+            started_at_seconds: elapsed_seconds,
+            ended_at_seconds: Some(elapsed_seconds),
+        });
+    }
+
+    fn push_event_with_cap(&mut self, event: RecordingImportantEventMetadata) {
+        if is_structural_event_type(&event.event_type) {
+            self.important_events.push(event);
+            return;
+        }
+
+        if self.high_volume_events_in_buffer >= MAX_PERSISTED_HIGH_VOLUME_EVENTS
+            && !self.trim_oldest_high_volume_event()
+        {
+            self.important_events_dropped_count =
+                self.important_events_dropped_count.saturating_add(1);
+            return;
+        }
+
+        self.important_events.push(event);
+        self.high_volume_events_in_buffer = self.high_volume_events_in_buffer.saturating_add(1);
+    }
+
+    fn trim_oldest_high_volume_event(&mut self) -> bool {
+        let Some(oldest_high_volume_index) = self
+            .important_events
+            .iter()
+            .position(|event| !is_structural_event_type(&event.event_type))
+        else {
+            return false;
+        };
+
+        self.important_events.remove(oldest_high_volume_index);
+        self.high_volume_events_in_buffer = self.high_volume_events_in_buffer.saturating_sub(1);
+        self.important_events_dropped_count = self.important_events_dropped_count.saturating_add(1);
+        true
+    }
+
+    pub(crate) fn snapshot(&self) -> RecordingMetadataSnapshot {
+        RecordingMetadataSnapshot {
+            zone_name: self.zone_name.clone(),
+            encounter_name: self.latest_encounter_name.clone(),
+            encounter_category: self.latest_encounter_category.clone(),
+            encounters: self.encounters.clone(),
+            important_events: self.important_events.clone(),
+            important_event_counts: self.important_event_counts.clone(),
+            important_events_dropped_count: self.important_events_dropped_count,
+        }
+    }
+}
+
+fn update_option_if_some(slot: &mut Option<String>, value: Option<&String>) {
+    if let Some(value) = value {
+        *slot = Some(value.clone());
+    }
+}
+
+fn encounter_identity(event: &ImportantCombatEvent) -> Option<(String, String)> {
+    let encounter_name = event.encounter_name.as_ref()?.clone();
+    let encounter_category = event.encounter_category.as_ref()?.clone();
+    Some((encounter_name, encounter_category))
+}
+
+fn encounter_key(encounter_name: &str, encounter_category: &str) -> String {
+    format!("{encounter_name}:{encounter_category}")
+}
+
+fn is_structural_event_type(event_type: &str) -> bool {
+    matches!(
+        event_type,
+        EVENT_MANUAL_MARKER | EVENT_ENCOUNTER_START | EVENT_ENCOUNTER_END
+    )
+}
+
+fn persist_recording_metadata_snapshot(
+    recording_output_path: &Path,
+    metadata_accumulator: &Arc<Mutex<RecordingMetadataAccumulator>>,
+) -> Result<(), String> {
+    let snapshot = {
+        let accumulator = metadata_accumulator
+            .lock()
+            .map_err(|error| error.to_string())?;
+        accumulator.snapshot()
+    };
+
+    if !snapshot.has_content() {
+        return Ok(());
+    }
+
+    let mut metadata = crate::recording::metadata::read_recording_metadata(recording_output_path)?
+        .unwrap_or_else(|| RecordingMetadata::new(recording_output_path));
+    metadata.apply_combat_log_snapshot(snapshot);
+
+    crate::recording::metadata::write_recording_metadata(recording_output_path, &metadata)?;
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -721,4 +1044,94 @@ fn normalize_name(name: Option<&str>) -> Option<String> {
     }
 
     Some(value.trim_matches('"').to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RecordingMetadataAccumulator, MAX_PERSISTED_HIGH_VOLUME_EVENTS};
+
+    #[test]
+    fn caps_high_volume_events_but_keeps_structural_events() {
+        let mut accumulator = RecordingMetadataAccumulator::default();
+        accumulator.record_manual_marker(0.25);
+
+        let encounter_start_line = build_line("ENCOUNTER_START", &["1", "\"Training Boss\"", "16"]);
+        accumulator.consume_combat_log_line(&encounter_start_line, 0.5);
+
+        let total_party_kills = MAX_PERSISTED_HIGH_VOLUME_EVENTS + 25;
+        for index in 0..total_party_kills {
+            let party_kill_line = build_party_kill_line(index);
+            accumulator.consume_combat_log_line(&party_kill_line, 1.0 + index as f64);
+        }
+
+        let snapshot = accumulator.snapshot();
+        let buffered_party_kill_count = snapshot
+            .important_events
+            .iter()
+            .filter(|event| event.event_type == "PARTY_KILL")
+            .count();
+
+        assert_eq!(
+            buffered_party_kill_count, MAX_PERSISTED_HIGH_VOLUME_EVENTS,
+            "High-volume party kill events should be capped"
+        );
+        assert_eq!(
+            snapshot.important_event_counts.get("PARTY_KILL").copied(),
+            Some(total_party_kills as u64),
+            "Counts should include all seen events, not only buffered events"
+        );
+        assert_eq!(
+            snapshot.important_events_dropped_count, 25,
+            "Dropped count should reflect events removed due to cap"
+        );
+        assert!(snapshot
+            .important_events
+            .iter()
+            .any(|event| event.event_type == "MANUAL_MARKER"));
+        assert!(snapshot
+            .important_events
+            .iter()
+            .any(|event| event.event_type == "ENCOUNTER_START"));
+    }
+
+    #[test]
+    fn updates_zone_context_without_persisting_context_only_events() {
+        let mut accumulator = RecordingMetadataAccumulator::default();
+
+        let zone_line = build_line("ZONE_CHANGED", &["\"Nerub-ar Palace\""]);
+        accumulator.consume_combat_log_line(&zone_line, 0.5);
+
+        let party_kill_line = build_party_kill_line(1);
+        accumulator.consume_combat_log_line(&party_kill_line, 1.0);
+
+        let snapshot = accumulator.snapshot();
+        assert_eq!(snapshot.zone_name.as_deref(), Some("Nerub-ar Palace"));
+        assert_eq!(snapshot.important_events.len(), 1);
+        assert_eq!(snapshot.important_events[0].event_type, "PARTY_KILL");
+    }
+
+    fn build_party_kill_line(index: usize) -> String {
+        build_line(
+            "PARTY_KILL",
+            &[
+                "Player-1111-00000001",
+                "\"PlayerOne-NA\"",
+                "0x514",
+                "0x0",
+                &format!("Creature-0-0-0-0-{}-0000000000", index + 1000),
+                &format!("\"Enemy{}\"", index),
+                "0x10a48",
+                "0x0",
+            ],
+        )
+    }
+
+    fn build_line(event_type: &str, fields: &[&str]) -> String {
+        let mut line = format!("2/22 20:15:11.000  {event_type}");
+        if !fields.is_empty() {
+            line.push(',');
+            line.push_str(&fields.join(","));
+        }
+        line
+    }
 }
