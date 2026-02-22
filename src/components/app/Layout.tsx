@@ -24,10 +24,12 @@ export function Layout() {
     typeof window === "undefined" ? 520 : Math.round(window.innerHeight * 0.52),
   );
   const reduceMotion = useReducedMotion();
+  const mediaSectionMaxHeight =
+    typeof window === "undefined" ? 320 : Math.max(320, Math.round(window.innerHeight * 0.66));
 
   const clampMediaSectionHeight = (height: number, viewportHeight: number) => {
     const minHeight = 320;
-    const maxHeight = Math.max(minHeight, Math.round(viewportHeight * 0.58));
+    const maxHeight = Math.max(minHeight, Math.round(viewportHeight * 0.66));
     return Math.min(maxHeight, Math.max(minHeight, height));
   };
 
@@ -151,7 +153,8 @@ export function Layout() {
                         aria-label="Resize media section"
                         aria-valuemin={320}
                         aria-valuenow={mediaSectionHeight}
-                        aria-valuemax={Math.max(320, Math.round(window.innerHeight * 0.58))}
+                        aria-valuemax={mediaSectionMaxHeight}
+                        aria-valuetext={`${mediaSectionHeight}px`}
                         tabIndex={0}
                       >
                         <div className="h-0.5 w-24 rounded-full bg-emerald-200/30" />

@@ -28,7 +28,7 @@ function formatDate(timestampSeconds: number): string {
 
 export function RecordingsList() {
   const { settings } = useSettings();
-  const { loadVideo } = useVideo();
+  const { loadVideo, videoSrc, isVideoLoading } = useVideo();
   const { isRecording, isPreviewing, stopPreview } = useRecording();
   const reduceMotion = useReducedMotion();
   const [recordings, setRecordings] = useState<RecordingInfo[]>([]);
@@ -40,6 +40,12 @@ export function RecordingsList() {
   const deleteDialogRef = useRef<HTMLDivElement>(null);
   const cancelDeleteButtonRef = useRef<HTMLButtonElement>(null);
   const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
+  const isActionLocked =
+    isRecording ||
+    Boolean(loadingRecordingPath) ||
+    Boolean(deletingRecordingPath) ||
+    Boolean(pendingDeleteRecording) ||
+    isVideoLoading;
 
   const loadRecordings = useCallback(async () => {
     if (!settings.outputFolder) {
@@ -68,7 +74,7 @@ export function RecordingsList() {
   }, [loadRecordings]);
 
   const handleLoadRecording = useCallback(async (recording: RecordingInfo) => {
-    if (isRecording || loadingRecordingPath || deletingRecordingPath) {
+    if (isRecording || loadingRecordingPath || deletingRecordingPath || isVideoLoading) {
       return;
     }
 
@@ -93,7 +99,7 @@ export function RecordingsList() {
     } finally {
       setLoadingRecordingPath(null);
     }
-  }, [deletingRecordingPath, isPreviewing, isRecording, loadVideo, loadingRecordingPath, stopPreview]);
+  }, [deletingRecordingPath, isPreviewing, isRecording, isVideoLoading, loadVideo, loadingRecordingPath, stopPreview]);
 
   const handleDeleteRecording = useCallback((recording: RecordingInfo) => {
     if (isRecording || loadingRecordingPath || deletingRecordingPath) {
@@ -198,7 +204,7 @@ export function RecordingsList() {
 
   return (
     <motion.section
-      className="bg-[var(--surface-1)] border-t border-emerald-300/10 px-4 py-3 min-h-0"
+      className="flex flex-1 min-h-0 flex-col bg-[var(--surface-1)] border-t border-emerald-300/10 px-4 py-3"
       variants={panelVariants}
       initial={reduceMotion ? false : 'initial'}
       animate="animate"
@@ -212,7 +218,7 @@ export function RecordingsList() {
         <motion.button
           type="button"
           onClick={loadRecordings}
-          disabled={isLoading}
+          disabled={isLoading || !settings.outputFolder}
           className="inline-flex h-7 items-center gap-1.5 rounded-md border border-emerald-400/30 bg-emerald-500/12 px-2.5 text-xs text-emerald-300 transition-colors hover:bg-emerald-500/22 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 disabled:cursor-not-allowed disabled:opacity-50"
           whileHover={reduceMotion ? undefined : { y: -1 }}
           whileTap={reduceMotion ? undefined : { scale: 0.98 }}
@@ -224,47 +230,70 @@ export function RecordingsList() {
 
       {error && <p className="mb-2 text-xs text-red-300" role="status">{error}</p>}
 
-      <div className="max-h-36 space-y-1 overflow-y-auto [scrollbar-gutter:stable]">
-        {recordings.length === 0 && !isLoading ? (
+      <div
+        className="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable]"
+        aria-busy={isLoading}
+      >
+        {!settings.outputFolder ? (
+          <p className="text-xs text-neutral-400">Select an output folder to browse recordings.</p>
+        ) : recordings.length === 0 && !isLoading ? (
           <p className="text-xs text-neutral-400">No recordings found in {settings.outputFolder}</p>
         ) : (
-          recordings.map((recording) => (
-            <motion.div
-              key={`${recording.filename}-${recording.created_at}`}
-              className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border border-emerald-300/10 bg-black/20 px-2.5 py-1.5 text-left transition-colors hover:border-emerald-300/30 hover:bg-white/5 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:gap-2"
-              initial={reduceMotion ? false : { opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={smoothTransition}
-            >
-                <button
-                  type="button"
-                  onClick={() => handleLoadRecording(recording)}
-                  disabled={isRecording || Boolean(loadingRecordingPath) || Boolean(deletingRecordingPath) || Boolean(pendingDeleteRecording)}
-                  className="min-w-0 flex items-center gap-2 rounded-md px-1 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 disabled:cursor-not-allowed disabled:opacity-60"
+          <ul className="space-y-1" role="list">
+            {recordings.map((recording) => {
+              const recordingSource = convertFileSrc(recording.file_path);
+              const isLoadedRecording = videoSrc === recordingSource;
+
+              return (
+                <motion.li
+                  key={`${recording.filename}-${recording.created_at}`}
+                  className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-1 rounded-md border text-left transition-colors hover:bg-white/5 ${
+                    isLoadedRecording
+                      ? 'border-emerald-300/40 bg-emerald-500/12 hover:border-emerald-300/50'
+                      : 'border-emerald-300/10 bg-black/20 hover:border-emerald-300/30'
+                  }`}
+                  initial={reduceMotion ? false : { opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={smoothTransition}
                 >
-                <HardDrive className="w-3.5 h-3.5 text-emerald-300/80 shrink-0" />
-                <span className="text-xs text-neutral-200 truncate" title={recording.filename}>
-                  {recording.filename}
-                </span>
-              </button>
-              <div className="hidden shrink-0 items-center gap-1.5 text-[11px] text-neutral-400 sm:inline-flex">
-                <Clock3 className="h-3 w-3" />
-                {loadingRecordingPath === recording.file_path
-                  ? 'Loading...'
-                  : `${formatBytes(recording.size_bytes)} · ${formatDate(recording.created_at)}`}
-              </div>
-              <button
-                type="button"
-                onClick={() => handleDeleteRecording(recording)}
-                disabled={isRecording || Boolean(loadingRecordingPath) || Boolean(deletingRecordingPath)}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-rose-300/25 bg-rose-500/10 text-rose-200 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-                title="Delete recording"
-                aria-label={`Delete recording ${recording.filename}`}
-              >
-                <Trash2 className={`h-3.5 w-3.5 ${deletingRecordingPath === recording.file_path ? 'animate-pulse' : ''}`} />
-              </button>
-            </motion.div>
-          ))
+                  <button
+                    type="button"
+                    onClick={() => handleLoadRecording(recording)}
+                    disabled={isActionLocked}
+                    aria-current={isLoadedRecording ? 'true' : undefined}
+                    className="min-w-0 flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <span className="min-w-0 flex items-center gap-2">
+                      <HardDrive className="w-3.5 h-3.5 text-emerald-300/80 shrink-0" />
+                      <span className="min-w-0">
+                        <span className="block truncate text-xs text-neutral-200" title={recording.filename}>
+                          {recording.filename}
+                        </span>
+                        <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-neutral-400 sm:hidden">
+                          <Clock3 className="h-3 w-3" />
+                          {`${formatBytes(recording.size_bytes)} · ${formatDate(recording.created_at)}`}
+                        </span>
+                      </span>
+                    </span>
+                    <span className="hidden shrink-0 items-center gap-1.5 text-[11px] text-neutral-400 sm:inline-flex">
+                      <Clock3 className="h-3 w-3" />
+                      {`${formatBytes(recording.size_bytes)} · ${formatDate(recording.created_at)}`}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteRecording(recording)}
+                    disabled={isRecording || Boolean(loadingRecordingPath) || Boolean(deletingRecordingPath)}
+                    className="mr-1 inline-flex h-6 w-6 items-center justify-center rounded-md border border-rose-300/25 bg-rose-500/10 text-rose-200 transition-colors hover:bg-rose-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/60 disabled:cursor-not-allowed disabled:opacity-50"
+                    title="Delete recording"
+                    aria-label={`Delete recording ${recording.filename}`}
+                  >
+                    <Trash2 className={`h-3.5 w-3.5 ${deletingRecordingPath === recording.file_path ? 'animate-pulse' : ''}`} />
+                  </button>
+                </motion.li>
+              );
+            })}
+          </ul>
         )}
       </div>
 

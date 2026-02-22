@@ -24,6 +24,7 @@ import {
   HOTKEY_OPTIONS,
 } from "../../types/settings";
 import { ReadOnlyPathField } from "./ReadOnlyPathField";
+import { SettingsSelect, type SettingsSelectOption } from "./SettingsSelect";
 import { SettingsSection } from "./SettingsSection";
 
 interface SettingsProps {
@@ -254,7 +255,28 @@ export function Settings({ onBack }: SettingsProps) {
     : 0;
 
   const fieldClassName =
-    "w-full rounded-md border border-emerald-300/20 bg-black/20 px-3 py-2 text-sm text-neutral-100 transition-colors placeholder:text-neutral-400 focus:border-emerald-300/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/45";
+    "w-full rounded-md border border-emerald-300/20 bg-black/20 px-3 py-2 text-sm text-neutral-100 transition-colors placeholder:text-neutral-400 focus:border-emerald-300/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/45 disabled:cursor-not-allowed disabled:border-emerald-300/10 disabled:bg-black/10 disabled:text-neutral-500";
+  const videoQualityOptions: SettingsSelectOption[] = Object.entries(QUALITY_SETTINGS).map(
+    ([key, { label }]) => ({ value: key, label }),
+  );
+  const frameRateOptions: SettingsSelectOption[] = [
+    { value: "30", label: "30 FPS" },
+    { value: "60", label: "60 FPS" },
+  ];
+  const captureSourceOptions: SettingsSelectOption[] = [
+    { value: "primary-monitor", label: "Primary Monitor" },
+    { value: "window", label: "Specific Window" },
+  ];
+  const selectedWindowOptions: SettingsSelectOption[] = availableWindows.map((windowOption) => ({
+    value: windowOption.id,
+    label: windowOption.processName
+      ? `${windowOption.title} (${windowOption.processName})`
+      : windowOption.title,
+  }));
+  const markerHotkeyOptions: SettingsSelectOption[] = HOTKEY_OPTIONS.map(({ value, label }) => ({
+    value,
+    label,
+  }));
   const fieldIds = {
     videoQuality: 'settings-video-quality',
     frameRate: 'settings-frame-rate',
@@ -314,17 +336,13 @@ export function Settings({ onBack }: SettingsProps) {
             <div className="grid gap-4 md:grid-cols-2">
               <div>
                 <label htmlFor={fieldIds.videoQuality} className="mb-2 block text-sm text-neutral-300">Video Quality</label>
-                <select
+                <SettingsSelect
                   id={fieldIds.videoQuality}
                   value={formData.videoQuality}
-                  onChange={(e) => setFormData({ ...formData, videoQuality: e.target.value as any })}
-                  className={fieldClassName}
-                  aria-describedby="settings-video-quality-help"
-                >
-                  {Object.entries(QUALITY_SETTINGS).map(([key, { label }]) => (
-                    <option key={key} value={key}>{label}</option>
-                  ))}
-                </select>
+                  options={videoQualityOptions}
+                  onChange={(nextValue) => setFormData({ ...formData, videoQuality: nextValue as any })}
+                  ariaDescribedBy="settings-video-quality-help"
+                />
                 <p id="settings-video-quality-help" className="mt-1 text-xs text-neutral-400">
                   Higher quality uses more disk space
                 </p>
@@ -332,15 +350,14 @@ export function Settings({ onBack }: SettingsProps) {
 
               <div>
                 <label htmlFor={fieldIds.frameRate} className="mb-2 block text-sm text-neutral-300">Frame Rate</label>
-                <select
+                <SettingsSelect
                   id={fieldIds.frameRate}
-                  value={formData.frameRate}
-                  onChange={(e) => setFormData({ ...formData, frameRate: parseInt(e.target.value) as any })}
-                  className={fieldClassName}
-                >
-                  <option value={30}>30 FPS</option>
-                  <option value={60}>60 FPS</option>
-                </select>
+                  value={String(formData.frameRate)}
+                  options={frameRateOptions}
+                  onChange={(nextValue) => {
+                    setFormData({ ...formData, frameRate: parseInt(nextValue) as any });
+                  }}
+                />
               </div>
             </div>
           </SettingsSection>
@@ -395,20 +412,17 @@ export function Settings({ onBack }: SettingsProps) {
             <div className="space-y-4">
               <div>
                 <label htmlFor={fieldIds.captureSource} className="mb-2 block text-sm text-neutral-300">Capture Source</label>
-                <select
+                <SettingsSelect
                   id={fieldIds.captureSource}
                   value={formData.captureSource}
-                  onChange={(e) =>
+                  options={captureSourceOptions}
+                  onChange={(nextValue) => {
                     setFormData({
                       ...formData,
-                      captureSource: e.target.value as RecordingSettings["captureSource"],
-                    })
-                  }
-                  className={fieldClassName}
-                >
-                  <option value="primary-monitor">Primary Monitor</option>
-                  <option value="window">Specific Window</option>
-                </select>
+                      captureSource: nextValue as RecordingSettings["captureSource"],
+                    });
+                  }}
+                />
               </div>
 
               {formData.captureSource === "window" && (
@@ -425,31 +439,23 @@ export function Settings({ onBack }: SettingsProps) {
                       Refresh
                     </button>
                   </div>
-                  <select
+                  <SettingsSelect
                     id={fieldIds.selectedWindow}
                     value={formData.selectedWindow || ""}
-                    onChange={(e) => setFormData({ ...formData, selectedWindow: e.target.value })}
-                    className={fieldClassName}
+                    onChange={(nextValue) => {
+                      setFormData({ ...formData, selectedWindow: nextValue });
+                    }}
+                    options={selectedWindowOptions}
                     disabled={availableWindows.length === 0 || isLoadingWindows}
-                    aria-describedby={
+                    placeholder={isLoadingWindows ? "Loading windows..." : "Select a window"}
+                    ariaDescribedBy={
                       windowsError
                         ? "settings-window-error"
                         : availableWindows.length > 0
                           ? "settings-window-help"
                           : undefined
                     }
-                  >
-                    <option value="" disabled>
-                      {isLoadingWindows ? "Loading windows..." : "Select a window"}
-                    </option>
-                    {availableWindows.map((windowOption) => (
-                      <option key={windowOption.id} value={windowOption.id}>
-                        {windowOption.processName
-                          ? `${windowOption.title} (${windowOption.processName})`
-                          : windowOption.title}
-                      </option>
-                    ))}
-                  </select>
+                  />
                   {windowsError && (
                     <p id="settings-window-error" className="mt-1 text-xs text-rose-300" role="status">
                       {windowsError}
@@ -499,17 +505,13 @@ export function Settings({ onBack }: SettingsProps) {
             <div className="space-y-4">
               <div>
                 <label htmlFor={fieldIds.markerHotkey} className="mb-2 block text-sm text-neutral-300">Manual Marker Hotkey</label>
-                <select
+                <SettingsSelect
                   id={fieldIds.markerHotkey}
                   value={formData.markerHotkey}
-                  onChange={(e) => setFormData({ ...formData, markerHotkey: e.target.value as any })}
-                  className={fieldClassName}
-                  aria-describedby="settings-marker-hotkey-help"
-                >
-                  {HOTKEY_OPTIONS.map(({ value, label }) => (
-                    <option key={value} value={value}>{label}</option>
-                  ))}
-                </select>
+                  options={markerHotkeyOptions}
+                  onChange={(nextValue) => setFormData({ ...formData, markerHotkey: nextValue as any })}
+                  ariaDescribedBy="settings-marker-hotkey-help"
+                />
                 <p id="settings-marker-hotkey-help" className="mt-1 text-xs text-neutral-400">
                   Press this key during recording to add a manual marker. If the key is already in use by another application, try a different one.
                 </p>

@@ -5,6 +5,7 @@ interface VideoContextType {
   currentTime: number;
   duration: number;
   isPlaying: boolean;
+  isVideoLoading: boolean;
   volume: number;
   playbackRate: number;
   videoSrc: string | null;
@@ -19,6 +20,7 @@ interface VideoContextType {
   updateTime: (time: number) => void;
   updateDuration: (duration: number) => void;
   syncIsPlaying: (playing: boolean) => void;
+  setVideoLoading: (loading: boolean) => void;
 }
 
 const VideoContext = createContext<VideoContextType | null>(null);
@@ -26,9 +28,11 @@ const VideoContext = createContext<VideoContextType | null>(null);
 export function VideoProvider({ children }: { children: ReactNode }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
+  const loadingTimeoutRef = useRef<number | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isVideoLoading, setIsVideoLoading] = useState(false);
   const [volume, setVolumeState] = useState(1);
   const [playbackRate, setPlaybackRateState] = useState(1);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
@@ -68,14 +72,37 @@ export function VideoProvider({ children }: { children: ReactNode }) {
     setIsPlaying(playing);
   }, []);
 
-  const setVolume = useCallback((vol: number) => {
-    if (videoRef.current) {
-      videoRef.current.volume = vol;
+  const setVideoLoading = useCallback((loading: boolean) => {
+    if (loadingTimeoutRef.current !== null) {
+      clearTimeout(loadingTimeoutRef.current);
+      loadingTimeoutRef.current = null;
     }
-    setVolumeState(vol);
+
+    setIsVideoLoading(loading);
+
+    if (loading) {
+      loadingTimeoutRef.current = window.setTimeout(() => {
+        setIsVideoLoading(false);
+        loadingTimeoutRef.current = null;
+      }, 8000);
+    }
+  }, []);
+
+  const setVolume = useCallback((vol: number) => {
+    const nextVolume = Math.min(1, Math.max(0, vol));
+
+    if (videoRef.current) {
+      videoRef.current.volume = nextVolume;
+    }
+
+    setVolumeState(nextVolume);
   }, []);
 
   const setPlaybackRate = useCallback((rate: number) => {
+    if (!Number.isFinite(rate) || rate <= 0) {
+      return;
+    }
+
     if (videoRef.current) {
       videoRef.current.playbackRate = rate;
     }
@@ -83,6 +110,17 @@ export function VideoProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadVideo = useCallback((src: string) => {
+    if (src === videoSrc) {
+      if (videoRef.current) {
+        videoRef.current.pause();
+        videoRef.current.currentTime = 0;
+      }
+      setCurrentTime(0);
+      setIsPlaying(false);
+      setVideoLoading(false);
+      return;
+    }
+
     if (objectUrlRef.current && objectUrlRef.current !== src) {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
@@ -96,10 +134,14 @@ export function VideoProvider({ children }: { children: ReactNode }) {
     setCurrentTime(0);
     setDuration(0);
     setIsPlaying(false);
-  }, []);
+    setVideoLoading(true);
+  }, [setVideoLoading, videoSrc]);
 
   useEffect(() => {
     return () => {
+      if (loadingTimeoutRef.current !== null) {
+        clearTimeout(loadingTimeoutRef.current);
+      }
       if (objectUrlRef.current) {
         URL.revokeObjectURL(objectUrlRef.current);
       }
@@ -123,6 +165,7 @@ export function VideoProvider({ children }: { children: ReactNode }) {
         currentTime,
         duration,
         isPlaying,
+        isVideoLoading,
         volume,
         playbackRate,
         videoSrc,
@@ -137,6 +180,7 @@ export function VideoProvider({ children }: { children: ReactNode }) {
         updateTime,
         updateDuration,
         syncIsPlaying,
+        setVideoLoading,
       }}
     >
       {children}

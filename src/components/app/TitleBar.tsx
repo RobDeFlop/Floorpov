@@ -30,6 +30,16 @@ export function TitleBar() {
     appWindow.close();
   };
 
+  const handleDragStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    appWindow.startDragging().catch((error) => {
+      console.error("Window drag error:", error);
+    });
+  };
+
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -40,7 +50,11 @@ export function TitleBar() {
     <div
       className="flex h-10 items-stretch justify-between border-b border-emerald-300/10 bg-[var(--surface-1)] backdrop-blur-md select-none"
     >
-      <div className="flex h-full items-center gap-3 px-3" data-tauri-drag-region>
+      <div
+        className="flex h-full min-w-0 flex-1 items-center gap-3 px-3"
+        data-tauri-drag-region
+        onPointerDown={handleDragStart}
+      >
         <div className="inline-flex items-center gap-2 rounded-md border border-emerald-300/15 bg-emerald-500/10 px-2 py-1">
           <Clapperboard className="h-3.5 w-3.5 text-emerald-300" />
           <span className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-100">Floorpov</span>

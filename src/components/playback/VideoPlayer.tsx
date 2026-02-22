@@ -1,32 +1,13 @@
-import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { Clapperboard, FolderOpen, LoaderCircle, Maximize, Pause, Play, Volume2, VolumeX } from "lucide-react";
 import { useVideo } from "../../contexts/VideoContext";
 import { useRecording } from "../../contexts/RecordingContext";
 import { useMarker } from "../../contexts/MarkerContext";
 import { usePreview } from "../../hooks/usePreview";
-import { Clapperboard, FolderOpen, Maximize, Pause, Play, Volume2, VolumeX } from "lucide-react";
 import { EventMarker } from "../events/EventMarker";
+import { ControlIconButton } from "./ControlIconButton";
 
 const PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
-
-interface ControlIconButtonProps {
-  label: string;
-  onClick: () => void;
-  children: ReactNode;
-}
-
-function ControlIconButton({ label, onClick, children }: ControlIconButtonProps) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="rounded p-1 text-white transition-colors hover:text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/70"
-      aria-label={label}
-      title={label}
-    >
-      {children}
-    </button>
-  );
-}
 
 export function VideoPlayer() {
   const {
@@ -34,6 +15,7 @@ export function VideoPlayer() {
     currentTime,
     duration,
     isPlaying,
+    isVideoLoading,
     volume,
     playbackRate,
     videoSrc,
@@ -46,6 +28,7 @@ export function VideoPlayer() {
     updateTime,
     updateDuration,
     syncIsPlaying,
+    setVideoLoading,
   } = useVideo();
   const { events } = useMarker();
 
@@ -96,6 +79,8 @@ export function VideoPlayer() {
       const url = URL.createObjectURL(file);
       loadVideo(url);
     }
+
+    e.target.value = "";
   };
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
@@ -134,8 +119,14 @@ export function VideoPlayer() {
 
   return (
     <div className="h-full w-full">
-      <div className="relative h-full w-full overflow-hidden rounded-[var(--radius-md)] border border-emerald-300/10 bg-neutral-950/90">
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-emerald-500/5 via-transparent to-transparent" />
+      <div
+        className="relative h-full w-full overflow-hidden rounded-[var(--radius-md)] border border-emerald-300/10 bg-neutral-950/90"
+        aria-busy={isVideoLoading}
+      >
+        <div
+          className="pointer-events-none absolute inset-0 bg-gradient-to-b from-emerald-500/5 via-transparent to-transparent"
+          aria-hidden="true"
+        />
         {showCanvas && (
           <canvas
             ref={canvasRef}
@@ -151,12 +142,15 @@ export function VideoPlayer() {
             className="h-full w-full object-contain"
             preload="metadata"
             onLoadStart={() => {
+              setVideoLoading(true);
               console.log("[VideoPlayer] Video load started", { src: videoSrc });
             }}
             onCanPlay={() => {
+              setVideoLoading(false);
               console.log("[VideoPlayer] Video can play");
             }}
             onError={(event) => {
+              setVideoLoading(false);
               const mediaError = event.currentTarget.error;
               console.error("[VideoPlayer] Video load error", {
                 code: mediaError?.code,
@@ -167,11 +161,25 @@ export function VideoPlayer() {
               });
             }}
             onTimeUpdate={(e) => updateTime(e.currentTarget.currentTime)}
-            onLoadedMetadata={(e) => updateDuration(e.currentTarget.duration)}
+            onLoadedMetadata={(e) => {
+              setVideoLoading(false);
+              updateDuration(e.currentTarget.duration);
+            }}
             onPlay={() => syncIsPlaying(true)}
             onPause={() => syncIsPlaying(false)}
             onEnded={() => syncIsPlaying(false)}
           />
+        )}
+
+        {showVideo && isVideoLoading && (
+          <div
+            className="absolute inset-0 z-10 flex cursor-wait flex-col items-center justify-center gap-2 bg-neutral-950/60 backdrop-blur-sm"
+            role="status"
+            aria-live="polite"
+          >
+            <LoaderCircle className="h-6 w-6 animate-spin text-emerald-200" />
+            <p className="text-sm font-medium text-neutral-100">Loading recording...</p>
+          </div>
         )}
 
         {!videoSrc && !showCanvas && (
@@ -266,6 +274,18 @@ export function VideoPlayer() {
                   if (event.key === "ArrowRight") {
                     event.preventDefault();
                     seek(Math.min(duration, currentTime + 5));
+                    return;
+                  }
+
+                  if (event.key === "Home") {
+                    event.preventDefault();
+                    seek(0);
+                    return;
+                  }
+
+                  if (event.key === "End") {
+                    event.preventDefault();
+                    seek(duration);
                   }
                 }}
                 role="slider"
@@ -290,7 +310,7 @@ export function VideoPlayer() {
                     <button
                       key={event.id}
                       type="button"
-                      className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-neutral-200 hover:text-white"
+                      className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 rounded-sm p-0.5 text-neutral-200 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/70"
                       style={{ left: `${position}%` }}
                       onClick={(eventClick) => {
                         eventClick.stopPropagation();
