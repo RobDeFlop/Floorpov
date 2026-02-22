@@ -29,7 +29,7 @@ function formatDate(timestampSeconds: number): string {
 export function RecordingsList() {
   const { settings } = useSettings();
   const { loadVideo, videoSrc, isVideoLoading } = useVideo();
-  const { isRecording, isPreviewing, stopPreview } = useRecording();
+  const { isRecording } = useRecording();
   const reduceMotion = useReducedMotion();
   const [recordings, setRecordings] = useState<RecordingInfo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -82,10 +82,6 @@ export function RecordingsList() {
     setError(null);
 
     try {
-      if (isPreviewing) {
-        await stopPreview();
-      }
-
       const recordingSource = convertFileSrc(recording.file_path);
       console.log('[RecordingsList] Loading recording', {
         filename: recording.filename,
@@ -99,7 +95,7 @@ export function RecordingsList() {
     } finally {
       setLoadingRecordingPath(null);
     }
-  }, [deletingRecordingPath, isPreviewing, isRecording, isVideoLoading, loadVideo, loadingRecordingPath, stopPreview]);
+  }, [deletingRecordingPath, isRecording, isVideoLoading, loadVideo, loadingRecordingPath]);
 
   const handleDeleteRecording = useCallback((recording: RecordingInfo) => {
     if (isRecording || loadingRecordingPath || deletingRecordingPath) {

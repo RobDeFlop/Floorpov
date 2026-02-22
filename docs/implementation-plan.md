@@ -2,18 +2,18 @@
 
 ## Project Goal
 
-Floorpov records WoW gameplay with markers on important events (player deaths, kills, and manual markers). Users can capture either the full monitor or a specific window, with live preview during recording.
+Floorpov records WoW gameplay with markers on important events (player deaths, kills, and manual markers). The current recorder is FFmpeg-based and focused on primary monitor capture.
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Capture | `windows-capture` 2.0 (Windows Graphics Capture API + DXGI Desktop Duplication) |
-| Recording | `windows-capture::VideoEncoder` (H.264/MP4) |
-| Preview Encoding | WIC JPEG via `ImageEncoder` from `windows-capture` |
+| Capture | FFmpeg (`ddagrab`) |
+| Recording | FFmpeg (H.264/MP4) |
+| Preview Encoding | Not used in current FFmpeg-only path |
 | Hotkeys | `tauri-plugin-global-shortcut` |
 | Combat Log | File watcher + regex parsing (mocked initially) |
-| Audio | WASAPI or `windows-record` (later phase) |
+| Audio | WASAPI system loopback (microphone later phase) |
 
 ## Planned File Structure
 
@@ -22,8 +22,7 @@ src-tauri/
 |- Cargo.toml
 `- src/
    |- lib.rs          # Tauri commands + module exports
-   |- capture.rs      # Preview capture (JPEG frames)
-   |- recording.rs    # Video recording (H.264, audio later)
+   |- recording.rs    # FFmpeg recording orchestration
    `- combat_log.rs   # Combat log parsing (mocked initially)
 
 src/
@@ -36,8 +35,6 @@ src/
 |  |- Timeline.tsx
 |  |- RecordingControls.tsx
 |  `- Settings.tsx
-|- hooks/
-|  `- usePreview.ts
 |- types/
 |  `- events.ts
 `- data/
@@ -48,32 +45,21 @@ src/
 
 ### Backend
 
-1. Add dependency to `Cargo.toml`:
-   - `windows-capture = "2.0.0-alpha.7"`
-2. Build `src/capture.rs`:
-   - Preview capture handler implementing `GraphicsCaptureApiHandler`
-   - Source selection support (`primary-monitor` and later window capture)
-   - `start_preview`, `stop_preview`, `list_windows` commands
-   - Emit `preview-frame` events with JPEG bytes
-   - Emit `capture-stopped` lifecycle event
-3. Build `src/recording.rs`:
+1. Keep FFmpeg available at `src-tauri/bin/ffmpeg.exe` and bundle it via Tauri resources.
+2. Build `src/recording.rs` around FFmpeg process orchestration:
    - `start_recording` and `stop_recording`
-   - H.264/MP4 recording with `VideoEncoder`
-   - Emit `recording-started` and `recording-stopped`
-4. Register modules and commands in `src-tauri/src/lib.rs`.
+   - Primary monitor capture
+   - Optional system audio loopback
+   - Emit `recording-finalized` and `recording-stopped`
+3. Register recording and settings commands in `src-tauri/src/lib.rs`.
 
 ### Frontend
 
-1. Build `src/contexts/RecordingContext.tsx` for preview and recording state.
+1. Build `src/contexts/RecordingContext.tsx` for recording state and lifecycle.
 2. Build `src/components/RecordingControls.tsx`:
-   - Source dropdown
-   - Preview toggle
    - Recording toggle
    - Recording timer
-3. Update `src/components/VideoPlayer.tsx`:
-   - Canvas for live preview
-   - Video element for playback
-4. Build `src/hooks/usePreview.ts` to paint incoming frames on canvas.
+3. Update `src/components/VideoPlayer.tsx` for playback-first UX.
 
 ## Phase 2: Settings and UX Polish
 
@@ -111,9 +97,10 @@ src/
 [Start Recording]
       |
       v
-[Capture Pipeline]
-  |- preview-frame --> Frontend canvas draw
-  `- recording pipeline --> output video file
+[FFmpeg Process]
+      |
+      v
+ output video file
 
 [Combat Log Watch]
       |
@@ -129,26 +116,21 @@ src/
 | Frame rate | 30 fps |
 | Bitrate | 8 Mbps (High) |
 | Container | MP4 |
-| Audio | Deferred to later phase |
-| Preview FPS | 30 |
-| Preview quality | JPEG 85% |
+| Audio | System audio loopback (microphone deferred) |
+| Preview | Removed in FFmpeg-only mode |
 | Output folder | `%USERPROFILE%/Videos/Floorpov/` |
 
 ## Implementation Order
 
-1. Backend capture module (`capture.rs`) with preview.
-2. Frontend recording context and preview rendering.
-3. Backend recording module with MP4 output.
-4. Frontend recording controls and source selector.
-5. Frontend settings and persistence.
-6. Backend combat event source (mock first).
-7. Frontend marker context and timeline integration.
-8. Manual marker hotkeys.
-9. Audio capture support.
+1. Backend recording module with FFmpeg process orchestration.
+2. Frontend recording context and controls.
+3. Frontend settings and persistence.
+4. Backend combat event source (mock first).
+5. Frontend marker context and timeline integration.
+6. Manual marker hotkeys.
 
 ## Current Decisions
 
 - Default capture source: primary monitor.
 - Output folder default: `%USERPROFILE%/Videos/Floorpov/`.
-- Window selection UX: dropdown list.
 - Combat log parser: mocked first, then real parser.

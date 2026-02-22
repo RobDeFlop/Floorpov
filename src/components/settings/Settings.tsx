@@ -6,9 +6,7 @@ import {
   CheckCircle2,
   HardDrive,
   Keyboard,
-  Mic,
   Monitor,
-  RotateCw,
   Settings2,
   Video,
   Volume2,
@@ -26,15 +24,10 @@ import {
 import { ReadOnlyPathField } from "./ReadOnlyPathField";
 import { SettingsSelect, type SettingsSelectOption } from "./SettingsSelect";
 import { SettingsSection } from "./SettingsSection";
+import { SettingsToggleField } from "./SettingsToggleField";
 
 interface SettingsProps {
   onBack: () => void;
-}
-
-interface WindowOption {
-  id: string;
-  title: string;
-  processName?: string;
 }
 
 export function Settings({ onBack }: SettingsProps) {
@@ -44,9 +37,6 @@ export function Settings({ onBack }: SettingsProps) {
   const [folderSize, setFolderSize] = useState<number>(0);
   const [isWowFolderValid, setIsWowFolderValid] = useState<boolean>(false);
   const [hasChanges, setHasChanges] = useState(false);
-  const [availableWindows, setAvailableWindows] = useState<WindowOption[]>([]);
-  const [isLoadingWindows, setIsLoadingWindows] = useState(false);
-  const [windowsError, setWindowsError] = useState<string | null>(null);
 
   useEffect(() => {
     setFormData(settings);
@@ -96,85 +86,6 @@ export function Settings({ onBack }: SettingsProps) {
     setHasChanges(JSON.stringify(formData) !== JSON.stringify(settings));
   }, [formData, settings]);
 
-  useEffect(() => {
-    if (formData.captureSource === "window") {
-      void loadWindows();
-    } else {
-      setWindowsError(null);
-    }
-  }, [formData.captureSource]);
-
-  useEffect(() => {
-    if (formData.captureSource !== "window") {
-      return;
-    }
-
-    if (availableWindows.length === 0) {
-      return;
-    }
-
-    if (!formData.selectedWindow) {
-      setFormData((previous) => ({ ...previous, selectedWindow: availableWindows[0].id }));
-      return;
-    }
-
-    const hasMatchingId = availableWindows.some((windowOption) => {
-      return windowOption.id === formData.selectedWindow;
-    });
-
-    if (hasMatchingId) {
-      return;
-    }
-
-    const matchByTitle = availableWindows.find((windowOption) => {
-      return windowOption.title === formData.selectedWindow;
-    });
-
-    if (matchByTitle) {
-      setFormData((previous) => ({ ...previous, selectedWindow: matchByTitle.id }));
-      return;
-    }
-
-    setFormData((previous) => ({ ...previous, selectedWindow: availableWindows[0].id }));
-  }, [availableWindows, formData.captureSource, formData.selectedWindow]);
-
-  const getErrorMessage = (error: unknown): string => {
-    if (typeof error === "string") {
-      return error;
-    }
-
-    if (error && typeof error === "object") {
-      const maybeMessage = (error as { message?: unknown }).message;
-      if (typeof maybeMessage === "string") {
-        return maybeMessage;
-      }
-
-      const maybeError = (error as { error?: unknown }).error;
-      if (typeof maybeError === "string") {
-        return maybeError;
-      }
-    }
-
-    return "Failed to load available windows.";
-  };
-
-  const loadWindows = async () => {
-    setIsLoadingWindows(true);
-    setWindowsError(null);
-    try {
-      const windows = await invoke<WindowOption[]>("list_windows");
-      setAvailableWindows(windows);
-      if (windows.length === 0) {
-        setWindowsError("No capturable windows found. Open a window and refresh.");
-      }
-    } catch (error) {
-      setAvailableWindows([]);
-      setWindowsError(getErrorMessage(error));
-      console.error("Failed to list windows:", error);
-    } finally {
-      setIsLoadingWindows(false);
-    }
-  };
 
   const loadFolderSize = async () => {
     try {
@@ -209,10 +120,6 @@ export function Settings({ onBack }: SettingsProps) {
     }
     
     if (formData.maxStorageGB > MAX_STORAGE_GB) {
-      return;
-    }
-
-    if (formData.captureSource === "window" && !formData.selectedWindow) {
       return;
     }
 
@@ -263,16 +170,6 @@ export function Settings({ onBack }: SettingsProps) {
     { value: "30", label: "30 FPS" },
     { value: "60", label: "60 FPS" },
   ];
-  const captureSourceOptions: SettingsSelectOption[] = [
-    { value: "primary-monitor", label: "Primary Monitor" },
-    { value: "window", label: "Specific Window" },
-  ];
-  const selectedWindowOptions: SettingsSelectOption[] = availableWindows.map((windowOption) => ({
-    value: windowOption.id,
-    label: windowOption.processName
-      ? `${windowOption.title} (${windowOption.processName})`
-      : windowOption.title,
-  }));
   const markerHotkeyOptions: SettingsSelectOption[] = HOTKEY_OPTIONS.map(({ value, label }) => ({
     value,
     label,
@@ -282,12 +179,10 @@ export function Settings({ onBack }: SettingsProps) {
     frameRate: 'settings-frame-rate',
     outputFolder: 'settings-output-folder',
     maxStorageGB: 'settings-max-storage',
-    captureSource: 'settings-capture-source',
-    selectedWindow: 'settings-selected-window',
     wowFolder: 'settings-wow-folder',
     markerHotkey: 'settings-marker-hotkey',
     enableSystemAudio: 'settings-enable-system-audio',
-    enableMicrophone: 'settings-enable-microphone',
+    enableRecordingDiagnostics: 'settings-enable-recording-diagnostics',
   };
 
   return (
@@ -299,12 +194,12 @@ export function Settings({ onBack }: SettingsProps) {
             role="status"
             aria-live="polite"
           >
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-rose-500/20">
-              <div className="h-3 w-3 rounded-full bg-rose-400 animate-pulse" />
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/15">
+              <Settings2 className="h-5 w-5 text-amber-200" aria-hidden="true" />
             </div>
-            <h2 className="mb-2 text-xl font-semibold text-rose-100">Recording in Progress</h2>
-            <p className="text-neutral-300">
-              Stop recording to change settings
+            <h2 className="mb-2 text-lg font-semibold text-neutral-100">Settings are temporarily locked</h2>
+            <p className="text-sm text-neutral-300">
+              Stop recording from Home to edit settings. Current recording status remains in App Status.
             </p>
           </div>
         </div>
@@ -335,7 +230,7 @@ export function Settings({ onBack }: SettingsProps) {
           <SettingsSection title="Video" icon={<Video className="h-4 w-4" />}>
             <div className="grid gap-4 md:grid-cols-2">
               <div>
-                <label htmlFor={fieldIds.videoQuality} className="mb-2 block text-sm text-neutral-300">Video Quality</label>
+                <label htmlFor={fieldIds.videoQuality} className="mb-2 block text-sm text-neutral-300">Quality Preset</label>
                 <SettingsSelect
                   id={fieldIds.videoQuality}
                   value={formData.videoQuality}
@@ -344,7 +239,7 @@ export function Settings({ onBack }: SettingsProps) {
                   ariaDescribedBy="settings-video-quality-help"
                 />
                 <p id="settings-video-quality-help" className="mt-1 text-xs text-neutral-400">
-                  Higher quality uses more disk space
+                  Higher presets increase bitrate and disk usage.
                 </p>
               </div>
 
@@ -358,7 +253,11 @@ export function Settings({ onBack }: SettingsProps) {
                     setFormData({ ...formData, frameRate: parseInt(nextValue) as any });
                   }}
                 />
+                <p className="mt-1 text-xs text-neutral-400">
+                  This is your target capture rate.
+                </p>
               </div>
+
             </div>
           </SettingsSection>
 
@@ -410,64 +309,24 @@ export function Settings({ onBack }: SettingsProps) {
 
           <SettingsSection title="Capture" icon={<Monitor className="h-4 w-4" />}>
             <div className="space-y-4">
-              <div>
-                <label htmlFor={fieldIds.captureSource} className="mb-2 block text-sm text-neutral-300">Capture Source</label>
-                <SettingsSelect
-                  id={fieldIds.captureSource}
-                  value={formData.captureSource}
-                  options={captureSourceOptions}
-                  onChange={(nextValue) => {
+              <p className="text-sm text-neutral-300">
+                Capture uses the FFmpeg pipeline and records your primary monitor.
+              </p>
+              <div className="rounded-md border border-emerald-300/15 bg-black/20 p-3">
+                <p className="mb-2 text-xs uppercase tracking-[0.08em] text-neutral-500">Troubleshooting</p>
+                <SettingsToggleField
+                  id={fieldIds.enableRecordingDiagnostics}
+                  checked={formData.enableRecordingDiagnostics}
+                  onChange={(checked) => {
                     setFormData({
                       ...formData,
-                      captureSource: nextValue as RecordingSettings["captureSource"],
+                      enableRecordingDiagnostics: checked,
                     });
                   }}
+                  label="Enable Recording Diagnostics"
+                  description="Writes per-second audio and FFmpeg pacing logs to help debug stutter and crackle."
                 />
               </div>
-
-              {formData.captureSource === "window" && (
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <label htmlFor={fieldIds.selectedWindow} className="block text-sm text-neutral-300">Window</label>
-                    <button
-                      type="button"
-                      onClick={loadWindows}
-                      disabled={isLoadingWindows}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-emerald-300/20 bg-black/20 px-2.5 py-1 text-xs text-neutral-200 transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <RotateCw className={`h-3.5 w-3.5 ${isLoadingWindows ? "animate-spin" : ""}`} />
-                      Refresh
-                    </button>
-                  </div>
-                  <SettingsSelect
-                    id={fieldIds.selectedWindow}
-                    value={formData.selectedWindow || ""}
-                    onChange={(nextValue) => {
-                      setFormData({ ...formData, selectedWindow: nextValue });
-                    }}
-                    options={selectedWindowOptions}
-                    disabled={availableWindows.length === 0 || isLoadingWindows}
-                    placeholder={isLoadingWindows ? "Loading windows..." : "Select a window"}
-                    ariaDescribedBy={
-                      windowsError
-                        ? "settings-window-error"
-                        : availableWindows.length > 0
-                          ? "settings-window-help"
-                          : undefined
-                    }
-                  />
-                  {windowsError && (
-                    <p id="settings-window-error" className="mt-1 text-xs text-rose-300" role="status">
-                      {windowsError}
-                    </p>
-                  )}
-                  {!windowsError && availableWindows.length > 0 && (
-                    <p id="settings-window-help" className="mt-1 text-xs text-neutral-400">
-                      Pick the app window to preview and record.
-                    </p>
-                  )}
-                </div>
-              )}
             </div>
           </SettingsSection>
 
@@ -522,35 +381,23 @@ export function Settings({ onBack }: SettingsProps) {
           <SettingsSection
             title="Audio"
             icon={<Volume2 className="h-4 w-4" />}
-            className="opacity-70"
           >
             <div className="space-y-4">
-              <p className="text-sm text-neutral-400">Audio recording will be available in a later phase.</p>
+              <p className="text-sm text-neutral-400">
+                System audio recording is available in the FFmpeg recorder pipeline.
+              </p>
 
-              <label htmlFor={fieldIds.enableSystemAudio} className="flex items-center gap-3 cursor-not-allowed rounded-md border border-emerald-300/10 bg-black/20 px-3 py-2 text-neutral-300">
-                <input
-                  id={fieldIds.enableSystemAudio}
-                  type="checkbox"
-                  disabled
-                  checked={formData.enableSystemAudio}
-                  className="w-4 h-4"
-                />
-                <span className="text-sm">Enable System Audio</span>
-              </label>
-
-              <label htmlFor={fieldIds.enableMicrophone} className="flex items-center gap-3 cursor-not-allowed rounded-md border border-emerald-300/10 bg-black/20 px-3 py-2 text-neutral-300">
-                <input
-                  id={fieldIds.enableMicrophone}
-                  type="checkbox"
-                  disabled
-                  checked={formData.enableMicrophone}
-                  className="w-4 h-4"
-                />
-                <span className="inline-flex items-center gap-2 text-sm">
-                  <Mic className="h-3.5 w-3.5" />
-                  Enable Microphone
-                </span>
-              </label>
+              <SettingsToggleField
+                id={fieldIds.enableSystemAudio}
+                checked={formData.enableSystemAudio}
+                onChange={(checked) => {
+                  setFormData({
+                    ...formData,
+                    enableSystemAudio: checked,
+                  });
+                }}
+                label="Enable System Audio"
+              />
             </div>
           </SettingsSection>
         </div>

@@ -1,4 +1,3 @@
-mod capture;
 mod combat_log;
 mod hotkey;
 mod recording;
@@ -25,7 +24,6 @@ pub fn run() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let capture_state = Arc::new(RwLock::new(capture::CaptureState::new()));
     let recording_state = Arc::new(RwLock::new(recording::RecordingState::new()));
 
     tauri::Builder::default()
@@ -34,7 +32,6 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .manage(capture_state)
         .manage(recording_state)
         .setup(|app| {
             let output_folder = match settings::get_default_output_folder() {
@@ -83,9 +80,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             is_debug_build,
-            capture::start_preview,
-            capture::stop_preview,
-            capture::list_windows,
             recording::start_recording,
             recording::stop_recording,
             settings::get_default_output_folder,

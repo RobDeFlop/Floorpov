@@ -1,24 +1,20 @@
-use base64::Engine;
+use std::collections::VecDeque;
+use std::io::{BufRead, BufReader, Write};
+use std::net::TcpListener;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::path::BaseDirectory;
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::{mpsc, RwLock};
-use windows_capture::{
-    capture::{Context, GraphicsCaptureApiHandler},
-    encoder::{
-        AudioSettingsBuilder, ContainerSettingsBuilder, ImageEncoder, ImageEncoderPixelFormat,
-        ImageFormat, VideoEncoder, VideoSettingsBuilder, VideoSettingsSubType,
-    },
-    frame::Frame,
-    graphics_capture_api::InternalCaptureControl,
-    monitor::Monitor,
-    settings::{
-        ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
-        MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
-    },
-    window::Window,
-};
+use wasapi::{initialize_mta, DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
 
 #[derive(Clone, serde::Serialize)]
 pub struct RecordingStartedPayload {
@@ -27,216 +23,29 @@ pub struct RecordingStartedPayload {
     height: u32,
 }
 
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PreviewFramePayload {
-    data_base64: String,
-}
+const FFMPEG_RESOURCE_PATH: &str = "bin/ffmpeg.exe";
+const FFMPEG_STOP_TIMEOUT: Duration = Duration::from_secs(5);
+const SYSTEM_AUDIO_SAMPLE_RATE_HZ: usize = 48_000;
+const SYSTEM_AUDIO_CHANNEL_COUNT: usize = 2;
+const SYSTEM_AUDIO_BITS_PER_SAMPLE: usize = 16;
+const SYSTEM_AUDIO_CHUNK_FRAMES: usize = 960;
+const SYSTEM_AUDIO_EVENT_TIMEOUT_MS: u32 = 500;
+const AUDIO_TCP_ACCEPT_WAIT_MS: u64 = 25;
+const SYSTEM_AUDIO_QUEUE_CAPACITY: usize = 256;
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-const PREVIEW_FRAME_INTERVAL: Duration = Duration::from_millis(83);
-const MAX_FILENAME_SEGMENT_LENGTH: usize = 48;
-
-struct RecordingHandler {
-    app_handle: AppHandle,
-    output_path: String,
-    encoder: Option<VideoEncoder>,
-    preview_encoder: ImageEncoder,
-    preview_buffer: Vec<u8>,
-    next_preview_emit_at: Instant,
-    stop_rx: mpsc::Receiver<()>,
-    state: SharedRecordingState,
-    finalized_emitted: bool,
-}
-
-type RecordingHandlerFlags = <RecordingHandler as GraphicsCaptureApiHandler>::Flags;
-
-impl RecordingHandler {
-    fn finish_encoder_if_present(&mut self, context: &str) {
-        if let Some(encoder) = self.encoder.take() {
-            if let Err(error) = encoder.finish() {
-                tracing::error!("Failed to finalize recording encoder {context}: {error}");
-            }
-        }
-    }
-
-    fn emit_recording_finalized(&mut self) {
-        if self.finalized_emitted {
-            return;
-        }
-
-        if let Err(error) = self
-            .app_handle
-            .emit("recording-finalized", &self.output_path)
-        {
-            tracing::error!("Failed to emit recording-finalized event: {error}");
-            return;
-        }
-
-        self.finalized_emitted = true;
-    }
-
-    fn emit_preview_frame(&mut self, frame: &mut Frame) {
-        let now = Instant::now();
-        if now < self.next_preview_emit_at {
-            return;
-        }
-        self.next_preview_emit_at = now + PREVIEW_FRAME_INTERVAL;
-
-        let width = frame.width();
-        let height = frame.height();
-
-        let mut frame_buffer = match frame.buffer() {
-            Ok(buffer) => buffer,
-            Err(error) => {
-                tracing::warn!("Failed to read frame buffer for recording preview: {error}");
-                return;
-            }
-        };
-
-        let pixels: &[u8] = if frame_buffer.has_padding() {
-            let bytes_per_pixel = match frame_buffer.color_format() {
-                ColorFormat::Rgba16F => 8usize,
-                ColorFormat::Rgba8 | ColorFormat::Bgra8 => 4usize,
-            };
-
-            let width_usize = width as usize;
-            let height_usize = height as usize;
-            let row_bytes = width_usize * bytes_per_pixel;
-            let row_pitch = frame_buffer.row_pitch() as usize;
-
-            if row_bytes > row_pitch {
-                tracing::warn!("Skipping recording preview frame due to invalid row pitch");
-                return;
-            }
-
-            let frame_size = row_bytes * height_usize;
-            self.preview_buffer.resize(frame_size, 0);
-
-            let raw_buffer = frame_buffer.as_raw_buffer();
-
-            for row in 0..height_usize {
-                let source_start = row * row_pitch;
-                let source_end = source_start + row_bytes;
-                let target_start = row * row_bytes;
-                let target_end = target_start + row_bytes;
-
-                if source_end > raw_buffer.len() || target_end > self.preview_buffer.len() {
-                    tracing::warn!("Skipping recording preview frame due to invalid buffer bounds");
-                    return;
-                }
-
-                self.preview_buffer[target_start..target_end]
-                    .copy_from_slice(&raw_buffer[source_start..source_end]);
-            }
-
-            &self.preview_buffer
-        } else {
-            frame_buffer.as_raw_buffer()
-        };
-
-        let jpeg_bytes = match self.preview_encoder.encode(pixels, width, height) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                tracing::warn!("Failed to encode recording preview frame: {error}");
-                return;
-            }
-        };
-        let data_base64 = base64::engine::general_purpose::STANDARD.encode(jpeg_bytes);
-
-        if let Err(error) = self
-            .app_handle
-            .emit("preview-frame", PreviewFramePayload { data_base64 })
-        {
-            tracing::warn!("Failed to emit recording preview frame: {error}");
-        }
-    }
-
-    fn stop_requested(&mut self) -> bool {
-        match self.stop_rx.try_recv() {
-            Ok(()) => true,
-            Err(TryRecvError::Empty) => false,
-            Err(TryRecvError::Disconnected) => {
-                tracing::warn!("Recording stop channel disconnected; stopping capture");
-                true
-            }
-        }
-    }
-}
-
-impl GraphicsCaptureApiHandler for RecordingHandler {
-    type Flags = (
-        String,
-        u32,
-        u32,
-        crate::settings::RecordingSettings,
-        AppHandle,
-        mpsc::Receiver<()>,
-        SharedRecordingState,
-    );
-    type Error = Box<dyn std::error::Error + Send + Sync>;
-
-    fn new(context: Context<Self::Flags>) -> Result<Self, Self::Error> {
-        let (output_path, width, height, settings, app_handle, stop_rx, state) = context.flags;
-
-        let video_settings = VideoSettingsBuilder::new(width, height)
-            .sub_type(VideoSettingsSubType::H264)
-            .frame_rate(settings.frame_rate)
-            .bitrate(settings.bitrate);
-
-        let audio_settings = AudioSettingsBuilder::default().disabled(true);
-        let container_settings = ContainerSettingsBuilder::default();
-
-        let encoder = VideoEncoder::new(
-            video_settings,
-            audio_settings,
-            container_settings,
-            &output_path,
-        )?;
-
-        Ok(Self {
-            app_handle,
-            output_path,
-            encoder: Some(encoder),
-            preview_encoder: ImageEncoder::new(ImageFormat::Jpeg, ImageEncoderPixelFormat::Bgra8)?,
-            preview_buffer: Vec::new(),
-            next_preview_emit_at: Instant::now(),
-            stop_rx,
-            state,
-            finalized_emitted: false,
-        })
-    }
-
-    fn on_frame_arrived(
-        &mut self,
-        frame: &mut Frame,
-        capture_control: InternalCaptureControl,
-    ) -> Result<(), Self::Error> {
-        if self.stop_requested() {
-            self.finish_encoder_if_present("after stop request");
-            self.emit_recording_finalized();
-            capture_control.stop();
-            return Ok(());
-        }
-
-        self.emit_preview_frame(frame);
-
-        if let Some(encoder) = &mut self.encoder {
-            encoder.send_frame(frame)?;
-        }
-        Ok(())
-    }
-
-    fn on_closed(&mut self) -> Result<(), Self::Error> {
-        self.finish_encoder_if_present("on close");
-        self.emit_recording_finalized();
-        clear_recording_state(&self.state);
-        emit_recording_stopped(&self.app_handle);
-        Ok(())
-    }
+#[derive(Default)]
+struct AudioPipelineStats {
+    queued_chunks: AtomicU64,
+    dequeued_chunks: AtomicU64,
+    dropped_chunks: AtomicU64,
+    write_timeouts: AtomicU64,
 }
 
 pub struct RecordingState {
     is_recording: bool,
+    is_stopping: bool,
     current_output_path: Option<String>,
     stop_tx: Option<mpsc::Sender<()>>,
 }
@@ -245,6 +54,7 @@ impl RecordingState {
     pub fn new() -> Self {
         Self {
             is_recording: false,
+            is_stopping: false,
             current_output_path: None,
             stop_tx: None,
         }
@@ -253,157 +63,275 @@ impl RecordingState {
 
 pub type SharedRecordingState = Arc<RwLock<RecordingState>>;
 
-enum CaptureTarget {
-    Monitor(Monitor),
-    Window(Window),
-}
+fn resolve_ffmpeg_binary_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
 
-fn sanitize_filename_segment(value: &str, fallback: &str) -> String {
-    let mut sanitized = String::with_capacity(value.len());
-    let mut previous_was_separator = false;
+    if let Ok(resource_path) = app_handle
+        .path()
+        .resolve(FFMPEG_RESOURCE_PATH, BaseDirectory::Resource)
+    {
+        candidates.push(resource_path);
+    }
 
-    for character in value.chars() {
-        let is_safe_character = character.is_ascii_alphanumeric();
-        if is_safe_character {
-            sanitized.push(character);
-            previous_was_separator = false;
-            continue;
-        }
+    let manifest_candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("bin")
+        .join("ffmpeg.exe");
+    candidates.push(manifest_candidate.clone());
 
-        if character.is_ascii_whitespace() || matches!(character, '-' | '_' | '.') {
-            if !previous_was_separator && !sanitized.is_empty() {
-                sanitized.push('-');
-                previous_was_separator = true;
-            }
+    if let Ok(current_executable) = std::env::current_exe() {
+        if let Some(executable_directory) = current_executable.parent() {
+            candidates.push(executable_directory.join("ffmpeg.exe"));
+            candidates.push(
+                executable_directory
+                    .join("resources")
+                    .join("bin")
+                    .join("ffmpeg.exe"),
+            );
         }
     }
 
-    let sanitized = sanitized.trim_matches('-').to_string();
-    let mut truncated = if sanitized.is_empty() {
-        fallback.to_string()
-    } else {
-        sanitized
+    if let Some(found_path) = candidates.into_iter().find(|path| path.exists()) {
+        return Ok(found_path);
+    }
+
+    Err(format!(
+        "FFmpeg binary was not found. Place ffmpeg.exe at '{}' or rebuild the app so bundled resources are available.",
+        manifest_candidate.display()
+    ))
+}
+
+fn select_video_encoder(ffmpeg_binary_path: &Path) -> (String, Option<String>) {
+    let mut command = Command::new(ffmpeg_binary_path);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = command
+        .arg("-hide_banner")
+        .arg("-encoders")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+
+    let encoders_output = match output {
+        Ok(result) => String::from_utf8(result.stdout)
+            .unwrap_or_default()
+            .to_lowercase(),
+        Err(_) => String::new(),
     };
 
-    if truncated.len() > MAX_FILENAME_SEGMENT_LENGTH {
-        truncated.truncate(MAX_FILENAME_SEGMENT_LENGTH);
-        while truncated.ends_with('-') {
-            truncated.pop();
-        }
+    if encoders_output.contains(" h264_nvenc") {
+        return ("h264_nvenc".to_string(), Some("p3".to_string()));
     }
 
-    if truncated.is_empty() {
-        return fallback.to_string();
+    if encoders_output.contains(" h264_qsv") {
+        return ("h264_qsv".to_string(), None);
     }
 
-    truncated
+    if encoders_output.contains(" h264_amf") {
+        return ("h264_amf".to_string(), None);
+    }
+
+    ("libx264".to_string(), Some("superfast".to_string()))
 }
 
-fn window_id(window: &Window) -> String {
-    format!("hwnd:{}", window.as_raw_hwnd() as usize)
+fn parse_ffmpeg_speed(line: &str) -> Option<f64> {
+    let speed_index = line.find("speed=")?;
+    let speed_slice = &line[speed_index + 6..];
+    let speed_token = speed_slice.split_whitespace().next()?;
+    let numeric = speed_token.trim_end_matches('x');
+    numeric.parse::<f64>().ok()
 }
 
-fn find_window_by_selection(selection: &str) -> Result<Window, String> {
-    let windows = Window::enumerate().map_err(|error| error.to_string())?;
+fn build_loopback_capture_context(
+) -> Result<(wasapi::AudioClient, wasapi::AudioCaptureClient, WaveFormat), String> {
+    initialize_mta()
+        .ok()
+        .map_err(|error| format!("Failed to initialize COM for system audio capture: {error}"))?;
 
-    if let Some(window) = windows
-        .iter()
-        .copied()
-        .find(|window| window_id(window) == selection)
-    {
-        return Ok(window);
-    }
+    let enumerator = DeviceEnumerator::new()
+        .map_err(|error| format!("Failed to enumerate audio devices: {error}"))?;
+    let device = enumerator
+        .get_default_device(&Direction::Render)
+        .map_err(|error| format!("Failed to access default output audio device: {error}"))?;
+    let mut audio_client = device
+        .get_iaudioclient()
+        .map_err(|error| format!("Failed to create WASAPI audio client: {error}"))?;
 
-    if let Some(window) = windows.iter().copied().find(|window| {
-        window
-            .title()
-            .map(|title| title.trim() == selection)
-            .unwrap_or(false)
-    }) {
-        return Ok(window);
-    }
+    let wave_format = WaveFormat::new(
+        SYSTEM_AUDIO_BITS_PER_SAMPLE,
+        SYSTEM_AUDIO_BITS_PER_SAMPLE,
+        &SampleType::Int,
+        SYSTEM_AUDIO_SAMPLE_RATE_HZ,
+        SYSTEM_AUDIO_CHANNEL_COUNT,
+        None,
+    );
+    let mode = StreamMode::EventsShared {
+        autoconvert: true,
+        buffer_duration_hns: 0,
+    };
 
-    Window::from_contains_name(selection).map_err(|_| {
-        format!("Could not find window '{selection}'. Refresh the window list and try again.")
-    })
+    audio_client
+        .initialize_client(&wave_format, &Direction::Capture, &mode)
+        .map_err(|error| {
+            format!("Failed to initialize WASAPI loopback client for system audio: {error}")
+        })?;
+
+    let capture_client = audio_client
+        .get_audiocaptureclient()
+        .map_err(|error| format!("Failed to create WASAPI capture client: {error}"))?;
+
+    Ok((audio_client, capture_client, wave_format))
 }
 
-fn resolve_capture_target(
-    capture_source: &str,
-    selected_window: Option<&str>,
-) -> Result<(CaptureTarget, u32, u32, String), String> {
-    match capture_source {
-        "primary-monitor" => {
-            let monitor = Monitor::primary().map_err(|error| error.to_string())?;
-            let width = monitor.width().map_err(|error| error.to_string())?;
-            let height = monitor.height().map_err(|error| error.to_string())?;
-            Ok((
-                CaptureTarget::Monitor(monitor),
-                width,
-                height,
-                "screen".to_string(),
-            ))
-        }
-        "window" => {
-            let selected_value = selected_window
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or("Select a window before starting recording".to_string())?;
+fn validate_system_audio_capture_available() -> Result<(), String> {
+    let _ = build_loopback_capture_context()?;
+    Ok(())
+}
 
-            let window = find_window_by_selection(selected_value)?;
+fn run_system_audio_capture_to_queue(
+    audio_tx: std_mpsc::SyncSender<Vec<u8>>,
+    stop_rx: std_mpsc::Receiver<()>,
+    stats: Arc<AudioPipelineStats>,
+) -> Result<(), String> {
+    let (audio_client, capture_client, wave_format) = build_loopback_capture_context()?;
+    let event_handle = audio_client
+        .set_get_eventhandle()
+        .map_err(|error| format!("Failed to configure WASAPI event handle: {error}"))?;
 
-            let window_name = window
-                .title()
-                .unwrap_or_else(|_| selected_value.to_string());
+    audio_client
+        .start_stream()
+        .map_err(|error| format!("Failed to start system audio stream: {error}"))?;
 
-            if !window.is_valid() {
-                return Err(format!(
-                    "Window '{window_name}' is not capturable right now. Try a different window."
-                ));
+    let mut sample_queue: VecDeque<u8> = VecDeque::new();
+    let chunk_size_bytes = wave_format.get_blockalign() as usize * SYSTEM_AUDIO_CHUNK_FRAMES;
+    let mut should_stop = false;
+    loop {
+        match stop_rx.try_recv() {
+            Ok(()) | Err(std_mpsc::TryRecvError::Disconnected) => {
+                should_stop = true;
             }
-
-            let width = window.width().map_err(|error| error.to_string())?;
-            let height = window.height().map_err(|error| error.to_string())?;
-
-            if width <= 0 || height <= 0 {
-                return Err(format!(
-                    "Window '{window_name}' has an invalid size and cannot be captured."
-                ));
-            }
-
-            let process_name = window
-                .process_name()
-                .map(|value| value.trim().to_lowercase())
-                .ok()
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| "window".to_string());
-            let sanitized_window_name = sanitize_filename_segment(&process_name, "window");
-
-            Ok((
-                CaptureTarget::Window(window),
-                width as u32,
-                height as u32,
-                format!("window_{}", sanitized_window_name),
-            ))
+            Err(std_mpsc::TryRecvError::Empty) => {}
         }
-        _ => Err(format!("Unsupported capture source: {capture_source}")),
+
+        let next_packet_frames = match capture_client.get_next_packet_size() {
+            Ok(packet_size) => packet_size.unwrap_or(0),
+            Err(error) => {
+                tracing::warn!("Failed to poll system audio packets: {error}");
+                thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+        };
+
+        if next_packet_frames > 0 {
+            if let Err(error) = capture_client.read_from_device_to_deque(&mut sample_queue) {
+                tracing::warn!("Failed to read system audio packet: {error}");
+                thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+        }
+
+        while sample_queue.len() >= chunk_size_bytes {
+            let mut chunk = Vec::with_capacity(chunk_size_bytes);
+            chunk.extend(sample_queue.drain(..chunk_size_bytes));
+
+            match audio_tx.try_send(chunk) {
+                Ok(()) => {
+                    stats.queued_chunks.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(std_mpsc::TrySendError::Full(_)) => {
+                    let dropped_chunks = stats.dropped_chunks.fetch_add(1, Ordering::Relaxed) + 1;
+                    if dropped_chunks % 64 == 0 {
+                        tracing::warn!(
+                            dropped_chunks,
+                            "Dropping system audio chunks due to queue backpressure"
+                        );
+                    }
+                }
+                Err(std_mpsc::TrySendError::Disconnected(_)) => return Ok(()),
+            }
+        }
+
+        if should_stop {
+            break;
+        }
+
+        if let Err(error) = event_handle.wait_for_event(SYSTEM_AUDIO_EVENT_TIMEOUT_MS) {
+            tracing::debug!("System audio wait event timed/failed: {error}");
+        }
     }
+
+    if !sample_queue.is_empty() {
+        let mut remaining = Vec::with_capacity(sample_queue.len());
+        remaining.extend(sample_queue.drain(..));
+        if audio_tx.try_send(remaining).is_ok() {
+            stats.queued_chunks.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    if let Err(error) = audio_client.stop_stream() {
+        tracing::warn!("Failed to stop system audio stream cleanly: {error}");
+    }
+
+    Ok(())
 }
 
-fn minimum_update_interval_for_frame_rate(frame_rate: u32) -> Duration {
-    let bounded_frame_rate = frame_rate.max(1) as u64;
-    Duration::from_millis((1000 / bounded_frame_rate).max(1))
+fn run_audio_queue_to_writer<TWriter: Write>(
+    mut writer: TWriter,
+    audio_rx: std_mpsc::Receiver<Vec<u8>>,
+    stop_rx: std_mpsc::Receiver<()>,
+    stats: Arc<AudioPipelineStats>,
+) -> Result<(), String> {
+    loop {
+        match stop_rx.try_recv() {
+            Ok(()) | Err(std_mpsc::TryRecvError::Disconnected) => break,
+            Err(std_mpsc::TryRecvError::Empty) => {}
+        }
+
+        match audio_rx.recv_timeout(Duration::from_millis(10)) {
+            Ok(chunk) => {
+                stats.dequeued_chunks.fetch_add(1, Ordering::Relaxed);
+                if let Err(error) = writer.write_all(&chunk) {
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) {
+                        stats.write_timeouts.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    }
+                    return Err(format!(
+                        "Failed to write system audio buffer to FFmpeg: {error}"
+                    ));
+                }
+            }
+            Err(std_mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std_mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    let _ = writer.flush();
+    Ok(())
 }
 
 fn clear_recording_state(state: &SharedRecordingState) {
-    match state.try_write() {
-        Ok(mut recording_state) => {
-            recording_state.is_recording = false;
-            recording_state.current_output_path = None;
-            recording_state.stop_tx = None;
+    let mut recording_state = state.blocking_write();
+    recording_state.is_recording = false;
+    recording_state.is_stopping = false;
+    recording_state.current_output_path = None;
+    recording_state.stop_tx = None;
+}
+
+fn signal_audio_threads_stop(
+    audio_capture_stop_tx: &Option<std_mpsc::Sender<()>>,
+    audio_writer_stop_tx: &Option<std_mpsc::Sender<()>>,
+) {
+    if let Some(capture_stop_tx) = audio_capture_stop_tx {
+        if let Err(error) = capture_stop_tx.send(()) {
+            tracing::debug!("Audio capture stop signal channel is closed: {error}");
         }
-        Err(_) => {
-            tracing::warn!("Could not clear recording state immediately due to lock contention");
+    }
+
+    if let Some(writer_stop_tx) = audio_writer_stop_tx {
+        if let Err(error) = writer_stop_tx.send(()) {
+            tracing::debug!("Audio writer stop signal channel is closed: {error}");
         }
     }
 }
@@ -414,60 +342,436 @@ fn emit_recording_stopped(app_handle: &AppHandle) {
     }
 }
 
-fn build_recording_flags(
+fn emit_recording_finalized(app_handle: &AppHandle, output_path: &str) {
+    if let Err(error) = app_handle.emit("recording-finalized", output_path) {
+        tracing::error!("Failed to emit recording-finalized event: {error}");
+    }
+}
+
+fn spawn_ffmpeg_recording_task(
+    app_handle: AppHandle,
+    state: SharedRecordingState,
     output_path: String,
-    width: u32,
-    height: u32,
-    recording_settings: crate::settings::RecordingSettings,
-    app_handle: AppHandle,
-    stop_rx: mpsc::Receiver<()>,
-    state: SharedRecordingState,
-) -> RecordingHandlerFlags {
-    (
-        output_path,
-        width,
-        height,
-        recording_settings,
-        app_handle,
-        stop_rx,
-        state,
-    )
-}
+    ffmpeg_binary_path: PathBuf,
+    requested_frame_rate: u32,
+    output_frame_rate: u32,
+    bitrate: u32,
+    include_system_audio: bool,
+    enable_diagnostics: bool,
+    mut stop_rx: mpsc::Receiver<()>,
+) {
+    thread::spawn(move || {
+        let bitrate_string = bitrate.to_string();
+        let maxrate_string = bitrate.to_string();
+        let buffer_size_string = bitrate.saturating_mul(2).to_string();
+        let (video_encoder, encoder_preset) = select_video_encoder(&ffmpeg_binary_path);
 
-fn build_recording_capture_settings<TCaptureTarget>(
-    capture_target: TCaptureTarget,
-    minimum_update_interval: Duration,
-    flags: RecordingHandlerFlags,
-) -> Settings<RecordingHandlerFlags, TCaptureTarget>
-where
-    TCaptureTarget: TryInto<windows_capture::settings::GraphicsCaptureItemType>,
-{
-    Settings::new(
-        capture_target,
-        CursorCaptureSettings::Default,
-        DrawBorderSettings::WithoutBorder,
-        SecondaryWindowSettings::Default,
-        MinimumUpdateIntervalSettings::Custom(minimum_update_interval),
-        DirtyRegionSettings::ReportAndRender,
-        ColorFormat::Bgra8,
-        flags,
-    )
-}
+        tracing::info!(
+            ffmpeg_path = %ffmpeg_binary_path.display(),
+            requested_frame_rate,
+            output_frame_rate,
+            bitrate,
+            include_system_audio,
+            enable_diagnostics,
+            video_encoder,
+            "Starting FFmpeg recording"
+        );
 
-fn spawn_recording_task<TCaptureTarget>(
-    capture_settings: Settings<RecordingHandlerFlags, TCaptureTarget>,
-    state: SharedRecordingState,
-    app_handle: AppHandle,
-) where
-    TCaptureTarget: TryInto<windows_capture::settings::GraphicsCaptureItemType>,
-    Settings<RecordingHandlerFlags, TCaptureTarget>: Send + 'static,
-{
-    tokio::spawn(async move {
-        if let Err(error) = RecordingHandler::start(capture_settings) {
-            tracing::error!("Recording error: {error}");
-            clear_recording_state(&state);
-            emit_recording_stopped(&app_handle);
+        let mut command = Command::new(&ffmpeg_binary_path);
+        #[cfg(target_os = "windows")]
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+            .arg("-hide_banner")
+            .arg("-loglevel")
+            .arg("warning")
+            .arg("-stats")
+            .arg("-stats_period")
+            .arg("1")
+            .arg("-y");
+
+        let mut audio_listener: Option<TcpListener> = None;
+
+        if include_system_audio {
+            let listener = match TcpListener::bind(("127.0.0.1", 0)) {
+                Ok(listener) => listener,
+                Err(error) => {
+                    tracing::error!("Failed to allocate local audio TCP listener: {error}");
+                    clear_recording_state(&state);
+                    emit_recording_stopped(&app_handle);
+                    return;
+                }
+            };
+
+            if let Err(error) = listener.set_nonblocking(true) {
+                tracing::error!("Failed to configure audio TCP listener: {error}");
+                clear_recording_state(&state);
+                emit_recording_stopped(&app_handle);
+                return;
+            }
+
+            let audio_port = match listener.local_addr() {
+                Ok(address) => address.port(),
+                Err(error) => {
+                    tracing::error!("Failed to resolve audio TCP listener port: {error}");
+                    clear_recording_state(&state);
+                    emit_recording_stopped(&app_handle);
+                    return;
+                }
+            };
+
+            command
+                .arg("-thread_queue_size")
+                .arg("1024")
+                .arg("-f")
+                .arg("s16le")
+                .arg("-ar")
+                .arg(SYSTEM_AUDIO_SAMPLE_RATE_HZ.to_string())
+                .arg("-ac")
+                .arg(SYSTEM_AUDIO_CHANNEL_COUNT.to_string())
+                .arg("-i")
+                .arg(format!("tcp://127.0.0.1:{audio_port}"))
+                .arg("-f")
+                .arg("lavfi")
+                .arg("-i")
+                .arg(format!(
+                    "ddagrab=output_idx=0:framerate={requested_frame_rate}:draw_mouse=1,hwdownload,format=bgra"
+                ))
+                .arg("-map")
+                .arg("1:v:0")
+                .arg("-map")
+                .arg("0:a:0")
+                .arg("-af")
+                .arg("aresample=async=1:min_hard_comp=0.100:first_pts=0,volume=2.2,alimiter=limit=0.98")
+                .arg("-vf")
+                .arg(format!("fps={output_frame_rate},format=yuv420p"))
+                .arg("-thread_queue_size")
+                .arg("512")
+                .arg("-c:a")
+                .arg("aac")
+                .arg("-b:a")
+                .arg("192k")
+                .arg("-ar")
+                .arg("48000")
+                .arg("-ac")
+                .arg("2");
+
+            audio_listener = Some(listener);
+        } else {
+            command
+                .arg("-f")
+                .arg("lavfi")
+                .arg("-i")
+                .arg(format!(
+                    "ddagrab=output_idx=0:framerate={requested_frame_rate}:draw_mouse=1,hwdownload,format=bgra"
+                ))
+                .arg("-vf")
+                .arg(format!("fps={output_frame_rate},format=yuv420p"))
+                .arg("-an");
         }
+
+        command.arg("-c:v").arg(&video_encoder);
+
+        if let Some(preset) = encoder_preset {
+            command.arg("-preset").arg(preset);
+        }
+
+        command
+            .arg("-b:v")
+            .arg(&bitrate_string)
+            .arg("-maxrate")
+            .arg(&maxrate_string)
+            .arg("-bufsize")
+            .arg(&buffer_size_string)
+            .arg("-fps_mode")
+            .arg("cfr")
+            .arg("-max_muxing_queue_size")
+            .arg("2048")
+            .arg("-movflags")
+            .arg("+faststart")
+            .arg(&output_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+
+        let mut child = match command.spawn() {
+            Ok(process) => process,
+            Err(error) => {
+                tracing::error!("Failed to spawn FFmpeg recording process: {error}");
+                clear_recording_state(&state);
+                emit_recording_stopped(&app_handle);
+                return;
+            }
+        };
+
+        let stderr_thread = child.stderr.take().map(|stderr| {
+            thread::spawn(move || {
+                let mut low_speed_streak = 0u32;
+                let mut low_speed_warned = false;
+
+                for line in BufReader::new(stderr).lines() {
+                    match line {
+                        Ok(content) if !content.trim().is_empty() => {
+                            let is_progress_line = content.contains("frame=")
+                                || content.contains("fps=")
+                                || content.contains("dup=")
+                                || content.contains("drop=")
+                                || content.contains("speed=");
+
+                            if let Some(speed) = parse_ffmpeg_speed(&content) {
+                                if speed < 0.90 {
+                                    low_speed_streak = low_speed_streak.saturating_add(1);
+                                    if low_speed_streak >= 3 && !low_speed_warned {
+                                        tracing::warn!(
+                                            speed,
+                                            "FFmpeg encode speed is below realtime; consider lower quality preset"
+                                        );
+                                        low_speed_warned = true;
+                                    }
+                                } else {
+                                    low_speed_streak = 0;
+                                }
+                            }
+
+                            if is_progress_line {
+                                if enable_diagnostics {
+                                    tracing::info!("ffmpeg: {content}");
+                                }
+                            } else {
+                                if enable_diagnostics {
+                                    tracing::debug!("ffmpeg: {content}");
+                                }
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            tracing::warn!("Failed to read FFmpeg stderr: {error}");
+                            break;
+                        }
+                    }
+                }
+            })
+        });
+
+        let (
+            audio_capture_stop_tx,
+            audio_writer_stop_tx,
+            audio_capture_thread,
+            audio_writer_thread,
+            audio_stats,
+        ) = if include_system_audio {
+            let Some(listener) = audio_listener else {
+                tracing::error!("System audio was enabled but audio listener was unavailable");
+                clear_recording_state(&state);
+                emit_recording_stopped(&app_handle);
+                return;
+            };
+
+            let (audio_tx, audio_rx) =
+                std_mpsc::sync_channel::<Vec<u8>>(SYSTEM_AUDIO_QUEUE_CAPACITY);
+            let (capture_stop_tx, capture_stop_rx) = std_mpsc::channel::<()>();
+            let (writer_stop_tx, writer_stop_rx) = std_mpsc::channel::<()>();
+            let stats = Arc::new(AudioPipelineStats::default());
+
+            let writer_stats = Arc::clone(&stats);
+            let writer_thread = thread::spawn(move || {
+                tracing::info!("Waiting for FFmpeg audio socket connection");
+                let audio_stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => {
+                            tracing::info!("FFmpeg audio socket connected");
+                            break Ok(stream);
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            match writer_stop_rx.try_recv() {
+                                Ok(()) | Err(std_mpsc::TryRecvError::Disconnected) => {
+                                    return Ok(());
+                                }
+                                Err(std_mpsc::TryRecvError::Empty) => {
+                                    thread::sleep(Duration::from_millis(AUDIO_TCP_ACCEPT_WAIT_MS));
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            break Err(format!("Failed to accept audio TCP stream: {error}"))
+                        }
+                    }
+                }?;
+
+                let _ = audio_stream.set_nodelay(true);
+                let _ = audio_stream.set_write_timeout(Some(Duration::from_millis(12)));
+                let writer_result =
+                    run_audio_queue_to_writer(audio_stream, audio_rx, writer_stop_rx, writer_stats);
+                tracing::info!("System audio writer thread exited");
+                writer_result
+            });
+
+            let capture_stats = Arc::clone(&stats);
+            let capture_thread = thread::spawn(move || {
+                let capture_result =
+                    run_system_audio_capture_to_queue(audio_tx, capture_stop_rx, capture_stats);
+                tracing::info!("System audio capture thread exited");
+                capture_result
+            });
+
+            (
+                Some(capture_stop_tx),
+                Some(writer_stop_tx),
+                Some(capture_thread),
+                Some(writer_thread),
+                Some(stats),
+            )
+        } else {
+            (None, None, None, None, None)
+        };
+
+        let mut stop_requested_at: Option<Instant> = None;
+        let mut kill_sent = false;
+        let mut stats_logged_at = Instant::now();
+        let mut previous_queued = 0u64;
+        let mut previous_dequeued = 0u64;
+        let mut previous_dropped = 0u64;
+        let mut previous_timeouts = 0u64;
+        let mut drop_warning_emitted = false;
+
+        let exit_status = loop {
+            if stop_requested_at.is_none() {
+                match stop_rx.try_recv() {
+                    Ok(()) | Err(TryRecvError::Disconnected) => {
+                        stop_requested_at = Some(Instant::now());
+                        signal_audio_threads_stop(&audio_capture_stop_tx, &audio_writer_stop_tx);
+
+                        if let Some(mut stdin) = child.stdin.take() {
+                            let _ = stdin.write_all(b"q\n");
+                            let _ = stdin.flush();
+                        }
+                    }
+                    Err(TryRecvError::Empty) => {}
+                }
+            }
+
+            if let Some(requested_at) = stop_requested_at {
+                if !kill_sent && requested_at.elapsed() >= FFMPEG_STOP_TIMEOUT {
+                    if let Err(error) = child.kill() {
+                        tracing::warn!("Failed to force-stop FFmpeg process: {error}");
+                    }
+                    kill_sent = true;
+                }
+            }
+
+            if let Some(audio_stats) = &audio_stats {
+                if stats_logged_at.elapsed() >= Duration::from_secs(1) {
+                    let queued_total = audio_stats.queued_chunks.load(Ordering::Relaxed);
+                    let dequeued_total = audio_stats.dequeued_chunks.load(Ordering::Relaxed);
+                    let dropped_total = audio_stats.dropped_chunks.load(Ordering::Relaxed);
+                    let timeouts_total = audio_stats.write_timeouts.load(Ordering::Relaxed);
+                    let queue_depth = queued_total.saturating_sub(dequeued_total);
+                    let dropped_delta = dropped_total.saturating_sub(previous_dropped);
+                    let timeout_delta = timeouts_total.saturating_sub(previous_timeouts);
+
+                    if dropped_delta > 0 && !drop_warning_emitted {
+                        tracing::warn!(
+                            dropped_delta,
+                            "Audio chunks were dropped to keep video smooth"
+                        );
+                        drop_warning_emitted = true;
+                    }
+
+                    if timeout_delta > 0 {
+                        tracing::warn!(
+                            timeout_delta,
+                            "Audio writer hit socket timeouts during this interval"
+                        );
+                    }
+
+                    if enable_diagnostics {
+                        tracing::info!(
+                            audio_queue_depth = queue_depth,
+                            audio_chunks_queued = queued_total.saturating_sub(previous_queued),
+                            audio_chunks_written = dequeued_total.saturating_sub(previous_dequeued),
+                            audio_chunks_dropped = dropped_delta,
+                            audio_write_timeouts = timeout_delta,
+                            "Audio pipeline stats"
+                        );
+                    }
+
+                    previous_queued = queued_total;
+                    previous_dequeued = dequeued_total;
+                    previous_dropped = dropped_total;
+                    previous_timeouts = timeouts_total;
+                    stats_logged_at = Instant::now();
+                }
+            }
+
+            match child.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) => thread::sleep(Duration::from_millis(25)),
+                Err(error) => break Err(error),
+            }
+        };
+
+        signal_audio_threads_stop(&audio_capture_stop_tx, &audio_writer_stop_tx);
+
+        if let Some(stderr_thread) = stderr_thread {
+            if let Err(error) = stderr_thread.join() {
+                tracing::warn!("Failed to join FFmpeg stderr thread: {error:?}");
+            }
+        }
+
+        if let Some(audio_capture_thread) = audio_capture_thread {
+            match audio_capture_thread.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::error!("System audio capture thread failed: {error}");
+                }
+                Err(error) => {
+                    tracing::error!("System audio capture thread panicked: {error:?}");
+                }
+            }
+        }
+
+        if let Some(audio_writer_thread) = audio_writer_thread {
+            match audio_writer_thread.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::error!("System audio writer thread failed: {error}");
+                }
+                Err(error) => {
+                    tracing::error!("System audio writer thread panicked: {error:?}");
+                }
+            }
+        }
+
+        let ffmpeg_completed_successfully = match exit_status {
+            Ok(status) if status.success() => {
+                tracing::info!("FFmpeg recording process finished successfully");
+                true
+            }
+            Ok(status) => {
+                tracing::error!("FFmpeg recording process exited with status: {status}");
+                false
+            }
+            Err(error) => {
+                tracing::error!("Failed while waiting for FFmpeg recording process: {error}");
+                if let Err(kill_error) = child.kill() {
+                    tracing::debug!("FFmpeg kill after wait failure returned: {kill_error}");
+                }
+                if let Err(wait_error) = child.wait() {
+                    tracing::warn!("Failed to collect FFmpeg exit status after kill: {wait_error}");
+                }
+                false
+            }
+        };
+
+        if ffmpeg_completed_successfully {
+            if Path::new(&output_path).exists() {
+                emit_recording_finalized(&app_handle, &output_path);
+            } else {
+                tracing::warn!("FFmpeg reported success but output file was not found");
+            }
+        }
+
+        clear_recording_state(&state);
+        emit_recording_stopped(&app_handle);
     });
 }
 
@@ -478,37 +782,23 @@ pub async fn start_recording(
     settings: crate::settings::RecordingSettings,
     output_folder: String,
     max_storage_bytes: u64,
-    capture_source: String,
-    selected_window: Option<String>,
 ) -> Result<RecordingStartedPayload, String> {
     {
         let recording_state = state.read().await;
-        if recording_state.is_recording {
+        if recording_state.is_recording || recording_state.is_stopping {
             return Err("Recording already in progress".to_string());
         }
     }
 
     std::fs::create_dir_all(&output_folder)
-        .map_err(|e| format!("Failed to create output directory: {}", e))?;
+        .map_err(|error| format!("Failed to create output directory: {error}"))?;
 
-    let (capture_target, width, height, capture_name_prefix) =
-        resolve_capture_target(capture_source.as_str(), selected_window.as_deref())?;
-
+    let width = 1920;
+    let height = 1080;
     let effective_bitrate = settings.effective_bitrate(width, height);
     let estimated_size = settings.estimate_size_bytes_for_capture(width, height);
 
-    tracing::info!(
-        video_quality = %settings.video_quality,
-        frame_rate = settings.frame_rate,
-        capture_width = width,
-        capture_height = height,
-        requested_bitrate_bps = settings.bitrate,
-        effective_bitrate_bps = effective_bitrate,
-        "Using adaptive recording bitrate"
-    );
-
     let current_size = crate::settings::get_folder_size(output_folder.clone())?;
-
     if current_size + estimated_size > max_storage_bytes {
         let cleanup_result = crate::settings::cleanup_old_recordings(
             output_folder.clone(),
@@ -524,58 +814,59 @@ pub async fn start_recording(
     }
 
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-    let filename = format!("{}_recording_{}.mp4", capture_name_prefix, timestamp);
-    let output_path = std::path::Path::new(&output_folder).join(filename);
+    let filename = format!("screen_recording_{timestamp}.mp4");
+    let output_path = Path::new(&output_folder).join(filename);
     let output_path_str = output_path.to_string_lossy().to_string();
 
     let mut recording_settings = settings;
     recording_settings.bitrate = effective_bitrate;
-    let minimum_update_interval =
-        minimum_update_interval_for_frame_rate(recording_settings.frame_rate);
+    if recording_settings.enable_system_audio {
+        recording_settings.bitrate = recording_settings.bitrate.min(16_000_000);
+    }
+    let output_frame_rate = recording_settings.frame_rate.max(1);
+    let ffmpeg_binary_path = resolve_ffmpeg_binary_path(&app_handle)?;
+
+    if recording_settings.enable_system_audio {
+        validate_system_audio_capture_available()?;
+    }
+
+    tracing::info!(
+        backend = "ffmpeg",
+        video_quality = %recording_settings.video_quality,
+        requested_frame_rate = recording_settings.frame_rate,
+        output_frame_rate,
+        include_system_audio = recording_settings.enable_system_audio,
+        enable_diagnostics = recording_settings.enable_recording_diagnostics,
+        effective_bitrate_bps = recording_settings.bitrate,
+        "Using recording settings"
+    );
 
     let (stop_tx, stop_rx) = mpsc::channel(1);
 
     {
         let mut recording_state = state.write().await;
-        if recording_state.is_recording {
+        if recording_state.is_recording || recording_state.is_stopping {
             return Err("Recording already in progress".to_string());
         }
 
         recording_state.is_recording = true;
+        recording_state.is_stopping = false;
         recording_state.current_output_path = Some(output_path_str.clone());
         recording_state.stop_tx = Some(stop_tx);
     }
 
-    let shared_state = state.inner().clone();
-    let app_handle_for_task = app_handle.clone();
-    let handler_flags = build_recording_flags(
-        output_path_str.clone(),
-        width,
-        height,
-        recording_settings,
+    spawn_ffmpeg_recording_task(
         app_handle.clone(),
-        stop_rx,
         state.inner().clone(),
+        output_path_str.clone(),
+        ffmpeg_binary_path,
+        recording_settings.frame_rate,
+        output_frame_rate,
+        recording_settings.bitrate,
+        recording_settings.enable_system_audio,
+        recording_settings.enable_recording_diagnostics,
+        stop_rx,
     );
-
-    match capture_target {
-        CaptureTarget::Monitor(monitor) => {
-            let capture_settings = build_recording_capture_settings(
-                monitor,
-                minimum_update_interval,
-                handler_flags,
-            );
-            spawn_recording_task(capture_settings, shared_state, app_handle_for_task);
-        }
-        CaptureTarget::Window(window) => {
-            let capture_settings = build_recording_capture_settings(
-                window,
-                minimum_update_interval,
-                handler_flags,
-            );
-            spawn_recording_task(capture_settings, shared_state, app_handle_for_task);
-        }
-    }
 
     Ok(RecordingStartedPayload {
         output_path: output_path_str,
@@ -600,7 +891,11 @@ pub async fn stop_recording(
             .clone()
             .ok_or_else(|| "No output path found".to_string())?;
 
-        recording_state.is_recording = false;
+        if recording_state.is_stopping {
+            return Ok(output_path);
+        }
+
+        recording_state.is_stopping = true;
 
         (output_path, recording_state.stop_tx.take())
     };

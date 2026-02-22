@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useRef, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useSettings } from "./SettingsContext";
@@ -6,20 +6,18 @@ import { useMarker } from "./MarkerContext";
 import { QUALITY_SETTINGS } from "../types/settings";
 import { convertCombatEvent, CombatEvent } from "../types/events";
 
-interface CaptureStartedPayload {
-  width: number;
-  height: number;
-  source: string;
-}
-
-interface PreviewFramePayload {
-  dataBase64: string;
-}
-
 interface RecordingStartedPayload {
   output_path: string;
   width: number;
   height: number;
+}
+
+interface RecordingCommandSettings {
+  video_quality: string;
+  frame_rate: number;
+  bitrate: number;
+  enable_system_audio: boolean;
+  enable_recording_diagnostics: boolean;
 }
 
 interface CleanupResult {
@@ -34,7 +32,6 @@ interface RecordingContextType {
   isInitializing: boolean;
   lastError: string | null;
   previewFrameUrl: string | null;
-  captureSource: string | null;
   captureWidth: number;
   captureHeight: number;
   recordingPath: string | null;
@@ -45,50 +42,18 @@ interface RecordingContextType {
   stopRecording: () => Promise<void>;
 }
 
-interface StopPreviewOptions {
-  preserveFrame?: boolean;
-}
-
 const RecordingContext = createContext<RecordingContextType | undefined>(undefined);
 
 export function RecordingProvider({ children }: { children: ReactNode }) {
   const [isRecording, setIsRecording] = useState(false);
-  const [isPreviewing, setIsPreviewing] = useState(false);
-  const [isInitializing, setIsInitializing] = useState(true);
-  const [previewFrameUrl, setPreviewFrameUrl] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
-  const [captureSource, setCaptureSource] = useState<string | null>(null);
   const [captureWidth, setCaptureWidth] = useState(0);
   const [captureHeight, setCaptureHeight] = useState(0);
   const [recordingPath, setRecordingPath] = useState<string | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [recordingStartTime, setRecordingStartTime] = useState<number | null>(null);
-  const appliedPreviewSettingsKeyRef = useRef<string>("");
-  const isApplyingPreviewSettingsRef = useRef(false);
-  const shouldResumePreviewAfterRecordingRef = useRef(false);
-  const isRestartingPreviewRef = useRef(false);
-  const isStoppingPreviewRef = useRef(false);
-  const isRecordingRef = useRef(false);
-  const isStartingRecordingRef = useRef(false);
   const { settings } = useSettings();
   const { addEvent, clearEvents } = useMarker();
-  const previewSettingsKey = `${settings.captureSource}::${settings.selectedWindow ?? ""}`;
-
-  useEffect(() => {
-    isRecordingRef.current = isRecording;
-  }, [isRecording]);
-
-  const waitForCaptureStopped = async (): Promise<boolean> => {
-    return waitForEvent("capture-stopped", 1200);
-  };
-
-  const waitForRecordingStopped = async () => {
-    return waitForEvent("recording-stopped", 1200);
-  };
-
-  const waitForRecordingFinalized = async () => {
-    return waitForEvent("recording-finalized", 3000);
-  };
 
   const waitForEvent = async (eventName: string, timeoutMs: number): Promise<boolean> => {
     return new Promise((resolve) => {
@@ -128,18 +93,18 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   };
 
   const getErrorMessage = (error: unknown): string => {
-    if (typeof error === 'string') {
+    if (typeof error === "string") {
       return error;
     }
 
-    if (error && typeof error === 'object') {
+    if (error && typeof error === "object") {
       const maybeMessage = (error as { message?: unknown }).message;
-      if (typeof maybeMessage === 'string') {
+      if (typeof maybeMessage === "string") {
         return maybeMessage;
       }
 
       const maybeError = (error as { error?: unknown }).error;
-      if (typeof maybeError === 'string') {
+      if (typeof maybeError === "string") {
         return maybeError;
       }
     }
@@ -167,33 +132,6 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   }, [isRecording, recordingStartTime]);
 
   useEffect(() => {
-    const unlistenPreviewFrame = listen<PreviewFramePayload>("preview-frame", (event) => {
-      if (
-        isStoppingPreviewRef.current &&
-        !isRecordingRef.current &&
-        !isStartingRecordingRef.current
-      ) {
-        return;
-      }
-      setPreviewFrameUrl(`data:image/jpeg;base64,${event.payload.dataBase64}`);
-      if (!isRecordingRef.current) {
-        setIsPreviewing(true);
-      }
-    });
-
-    const unlistenCaptureStopped = listen("capture-stopped", () => {
-      isStoppingPreviewRef.current = false;
-      if (
-        !isRestartingPreviewRef.current &&
-        !isStartingRecordingRef.current &&
-        !isRecordingRef.current
-      ) {
-        setIsPreviewing(false);
-        setCaptureSource(null);
-        setPreviewFrameUrl(null);
-      }
-    });
-
     const unlistenRecordingStopped = listen("recording-stopped", () => {
       setIsRecording(false);
       setRecordingStartTime(null);
@@ -210,182 +148,43 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     });
 
     return () => {
-      unlistenPreviewFrame.then((fn) => fn());
-      unlistenCaptureStopped.then((fn) => fn());
       unlistenRecordingStopped.then((fn) => fn());
       unlistenCleanup.then((fn) => fn());
       unlistenCombatEvent.then((fn) => fn());
     };
   }, [addEvent]);
 
-  useEffect(() => {
-    const initPreview = async () => {
-      try {
-        await startPreview();
-        setIsInitializing(false);
-      } catch (error) {
-        console.error("Failed to auto-start preview:", error);
-        setIsInitializing(false);
-      }
-    };
-
-    const timeoutId = setTimeout(initPreview, 150);
-
-    return () => clearTimeout(timeoutId);
-  }, []);
-
   const startPreview = async () => {
-    setLastError(null);
-    isRestartingPreviewRef.current = true;
-    isStoppingPreviewRef.current = false;
-    const requestedCaptureSource = settings.captureSource;
-    const requestedSelectedWindow = settings.selectedWindow ?? "";
-    try {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        try {
-          const result = await invoke<CaptureStartedPayload>("start_preview", {
-            captureSource: requestedCaptureSource,
-            selectedWindow: requestedSelectedWindow || null,
-          });
-          setIsPreviewing(true);
-          setCaptureSource(result.source);
-          setCaptureWidth(result.width);
-          setCaptureHeight(result.height);
-          appliedPreviewSettingsKeyRef.current =
-            `${requestedCaptureSource}::${requestedSelectedWindow}`;
-          return;
-        } catch (error) {
-          const message = getErrorMessage(error);
-          const isCaptureBusy = message.includes("Capture already in progress");
-          const canRetry = isCaptureBusy && attempt === 0;
-
-          if (!canRetry) {
-            console.error("Failed to start preview:", error);
-            setLastError(getErrorMessage(error));
-            throw error;
-          }
-
-          await invoke("stop_preview").catch(() => undefined);
-          const captureStopped = await waitForCaptureStopped();
-          if (!captureStopped) {
-            console.warn("Timed out waiting for capture-stopped event while retrying preview start");
-          }
-        }
-      }
-    } finally {
-      isRestartingPreviewRef.current = false;
-    }
+    return Promise.resolve();
   };
 
-  const stopPreview = async (options?: StopPreviewOptions) => {
-    setLastError(null);
-    isStoppingPreviewRef.current = true;
-    const preserveFrame = options?.preserveFrame ?? false;
-    try {
-      setIsPreviewing(false);
-      await invoke("stop_preview");
-      const captureStopped = await waitForCaptureStopped();
-      if (!captureStopped) {
-        console.warn("Timed out waiting for capture-stopped event");
-      }
-      if (!preserveFrame) {
-        setPreviewFrameUrl(null);
-      }
-    } catch (error) {
-      console.error("Failed to stop preview:", error);
-      throw error;
-    } finally {
-      isStoppingPreviewRef.current = false;
-    }
+  const stopPreview = async () => {
+    return Promise.resolve();
   };
-
-  useEffect(() => {
-    const syncPreviewWithSettings = async () => {
-      if (isInitializing || isRecording || !isPreviewing) {
-        return;
-      }
-
-      if (isApplyingPreviewSettingsRef.current) {
-        return;
-      }
-
-      if (appliedPreviewSettingsKeyRef.current === previewSettingsKey) {
-        return;
-      }
-
-      isApplyingPreviewSettingsRef.current = true;
-      try {
-        await stopPreview();
-        await startPreview();
-      } catch (error) {
-        console.error("Failed to apply preview settings change:", error);
-      } finally {
-        isApplyingPreviewSettingsRef.current = false;
-      }
-    };
-
-    void syncPreviewWithSettings();
-  }, [
-    isInitializing,
-    isPreviewing,
-    isRecording,
-    previewSettingsKey,
-    startPreview,
-    stopPreview,
-  ]);
 
   const startRecording = async () => {
     setLastError(null);
     let recordingStarted = false;
-    const shouldResumePreviewAfterRecording = isPreviewing;
-    isStartingRecordingRef.current = true;
+
     try {
       clearEvents();
 
-      if (isPreviewing) {
-        await stopPreview({ preserveFrame: true });
-        isStoppingPreviewRef.current = false;
-      }
-      
       const bitrateSettings = QUALITY_SETTINGS[settings.videoQuality];
-      const recordingSettings = {
+      const recordingSettings: RecordingCommandSettings = {
         video_quality: settings.videoQuality,
         frame_rate: settings.frameRate,
         bitrate: bitrateSettings.bitrate,
+        enable_system_audio: settings.enableSystemAudio,
+        enable_recording_diagnostics: settings.enableRecordingDiagnostics,
       };
 
-      let result: RecordingStartedPayload | null = null;
-
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        try {
-          result = await invoke<RecordingStartedPayload>("start_recording", {
-            settings: recordingSettings,
-            outputFolder: settings.outputFolder,
-            maxStorageBytes: settings.maxStorageGB * 1024 * 1024 * 1024,
-            captureSource: settings.captureSource,
-            selectedWindow: settings.selectedWindow,
-          });
-          break;
-        } catch (error) {
-          const message = getErrorMessage(error);
-          const isAlreadyRecording = message.includes("Recording already in progress");
-          const canRetry = isAlreadyRecording && attempt === 0;
-
-          if (!canRetry) {
-            throw error;
-          }
-
-          await invoke("stop_recording").catch(() => undefined);
-          await waitForRecordingStopped();
-        }
-      }
-
-      if (!result) {
-        throw new Error("Could not start recording. Please try again.");
-      }
+      const result = await invoke<RecordingStartedPayload>("start_recording", {
+        settings: recordingSettings,
+        outputFolder: settings.outputFolder,
+        maxStorageBytes: settings.maxStorageGB * 1024 * 1024 * 1024,
+      });
 
       recordingStarted = true;
-      shouldResumePreviewAfterRecordingRef.current = shouldResumePreviewAfterRecording;
 
       setIsRecording(true);
       setRecordingPath(result.output_path);
@@ -412,23 +211,19 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         await invoke("stop_combat_watch").catch(() => undefined);
         setIsRecording(false);
         setRecordingStartTime(null);
-      } else if (shouldResumePreviewAfterRecording) {
-        await startPreview().catch(() => undefined);
       }
-      shouldResumePreviewAfterRecordingRef.current = false;
       console.error("Failed to start recording:", error);
       setLastError(getErrorMessage(error));
       throw error;
-    } finally {
-      isStartingRecordingRef.current = false;
     }
   };
 
   const stopRecording = async () => {
     setLastError(null);
     try {
-      const waitForFinalize = waitForRecordingFinalized();
-      const waitForStopped = waitForRecordingStopped();
+      const waitForFinalize = waitForEvent("recording-finalized", 4000);
+      const waitForStopped = waitForEvent("recording-stopped", 2000);
+
       await invoke("stop_combat_watch").catch(() => undefined);
       await invoke("stop_recording");
 
@@ -446,11 +241,6 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
       setIsRecording(false);
       setRecordingStartTime(null);
-
-      if (shouldResumePreviewAfterRecordingRef.current) {
-        shouldResumePreviewAfterRecordingRef.current = false;
-        await startPreview();
-      }
     } catch (error) {
       console.error("Failed to stop recording:", error);
       setLastError(getErrorMessage(error));
@@ -462,11 +252,10 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     <RecordingContext.Provider
       value={{
         isRecording,
-        isPreviewing,
-        isInitializing,
+        isPreviewing: false,
+        isInitializing: false,
         lastError,
-        previewFrameUrl,
-        captureSource,
+        previewFrameUrl: null,
         captureWidth,
         captureHeight,
         recordingPath,
