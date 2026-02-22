@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -63,14 +63,14 @@ pub async fn start_combat_watch(app_handle: AppHandle, wow_folder: String) -> Re
         return Err("Combat watch already running".to_string());
     }
 
-    let log_path = build_combat_log_path(&wow_folder);
-    if !log_path.is_file() {
-        return Err(format!(
-            "WoW combat log file not found at '{}'. Expected '{}'.",
+    let logs_directory = build_combat_log_directory_path(&wow_folder);
+    let log_path = find_latest_combat_log_path(&wow_folder)?.ok_or_else(|| {
+        format!(
+            "WoW combat log file not found at '{}'. Expected a file like '{}'.",
             wow_folder,
-            log_path.to_string_lossy()
-        ));
-    }
+            logs_directory.join("WoWCombatLog*.txt").to_string_lossy()
+        )
+    })?;
 
     let initial_offset = std::fs::metadata(&log_path)
         .map_err(|error| error.to_string())?
@@ -120,7 +120,10 @@ pub fn validate_wow_folder(path: String) -> bool {
         return false;
     }
 
-    build_combat_log_path(&path).is_file()
+    match find_latest_combat_log_path(&path) {
+        Ok(log_path) => log_path.is_some(),
+        Err(_) => false,
+    }
 }
 
 #[tauri::command]
@@ -197,8 +200,58 @@ pub fn parse_combat_log_file(file_path: String) -> Result<ParseCombatLogDebugRes
     })
 }
 
-fn build_combat_log_path(wow_folder: &str) -> PathBuf {
-    Path::new(wow_folder).join("Logs").join("WoWCombatLog.txt")
+fn build_combat_log_directory_path(wow_folder: &str) -> PathBuf {
+    Path::new(wow_folder).join("Logs")
+}
+
+fn is_combat_log_file_name(file_name: &str) -> bool {
+    let lower_file_name = file_name.to_ascii_lowercase();
+    lower_file_name.starts_with("wowcombatlog") && lower_file_name.ends_with(".txt")
+}
+
+fn find_latest_combat_log_path(wow_folder: &str) -> Result<Option<PathBuf>, String> {
+    let logs_directory = build_combat_log_directory_path(wow_folder);
+    let directory_entries = match std::fs::read_dir(&logs_directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            if logs_directory.exists() {
+                return Err(error.to_string());
+            }
+            return Ok(None);
+        }
+    };
+
+    let mut latest_match: Option<(SystemTime, PathBuf)> = None;
+
+    for entry_result in directory_entries {
+        let entry = entry_result.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !is_combat_log_file_name(file_name) {
+            continue;
+        }
+
+        let modified_time = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+
+        if latest_match
+            .as_ref()
+            .map(|(latest_time, _)| modified_time > *latest_time)
+            .unwrap_or(true)
+        {
+            latest_match = Some((modified_time, path));
+        }
+    }
+
+    Ok(latest_match.map(|(_, path)| path))
 }
 
 async fn watch_combat_log(

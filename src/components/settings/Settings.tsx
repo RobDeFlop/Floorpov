@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
-  ArrowLeft,
   AppWindow,
+  ArrowLeft,
   CheckCircle2,
   HardDrive,
   Keyboard,
@@ -14,19 +13,20 @@ import {
   Volume2,
   XCircle,
 } from "lucide-react";
-import { useSettings } from "../../contexts/SettingsContext";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRecording } from "../../contexts/RecordingContext";
+import { useSettings } from "../../contexts/SettingsContext";
 import {
-  RecordingSettings,
   CaptureSource,
-  QUALITY_SETTINGS,
-  MIN_STORAGE_GB,
-  MAX_STORAGE_GB,
   HOTKEY_OPTIONS,
+  MAX_STORAGE_GB,
+  MIN_STORAGE_GB,
+  QUALITY_SETTINGS,
+  RecordingSettings,
 } from "../../types/settings";
 import { ReadOnlyPathField } from "./ReadOnlyPathField";
-import { SettingsSelect, type SettingsSelectOption } from "./SettingsSelect";
 import { SettingsSection } from "./SettingsSection";
+import { SettingsSelect, type SettingsSelectOption } from "./SettingsSelect";
 import { SettingsToggleField } from "./SettingsToggleField";
 
 interface SettingsProps {
@@ -518,21 +518,20 @@ export function Settings({ onBack }: SettingsProps) {
                   onBrowse={handleBrowseWowFolder}
                 />
                 <p className="mt-2 text-xs text-neutral-400">
-                  Select your WoW client folder (for example: {" "}
-                  <span className="font-mono">C:\Program Files (x86)\World of Warcraft\_retail_</span>
-                  ). FloorPoV then reads combat events from{" "}
-                  <span className="font-mono">Logs\WoWCombatLog.txt</span> inside that folder.
+                  Select your WoW client folder. FloorPoV looks for{" "}
+                  <span className="font-mono">Logs\WoWCombatLog*.txt</span> (for example{" "}
+                  <span className="font-mono">WoWCombatLog-021726_124240.txt</span>).
                 </p>
                 {formData.wowFolder && isWowFolderValid && (
-                  <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-neutral-300">
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    Combat log found at Logs/WoWCombatLog.txt.
+                  <p className="mt-2 inline-flex items-center gap-1.5 rounded-sm border border-emerald-300/30 bg-emerald-500/12 px-2 py-1 text-xs text-emerald-100">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
+                    Combat log found!
                   </p>
                 )}
                 {formData.wowFolder && !isWowFolderValid && (
-                  <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-rose-300">
-                    <XCircle className="h-3.5 w-3.5" />
-                    Could not find Logs/WoWCombatLog.txt in this folder.
+                  <p className="mt-2 inline-flex items-center gap-1.5 rounded-sm border border-rose-300/30 bg-rose-500/12 px-2 py-1 text-xs text-rose-200">
+                    <XCircle className="h-3.5 w-3.5 text-rose-300" />
+                    Could not find any logs this folder.
                   </p>
                 )}
               </div>
