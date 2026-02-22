@@ -6,28 +6,14 @@ pub struct RecordingSettings {
     pub video_quality: String,
     pub frame_rate: u32,
     pub bitrate: u32,
+    pub enable_system_audio: bool,
+    pub enable_recording_diagnostics: bool,
 }
 
 impl RecordingSettings {
     const REFERENCE_WIDTH: u32 = 1920;
     const REFERENCE_HEIGHT: u32 = 1080;
     const REFERENCE_FRAME_RATE: u32 = 30;
-
-    pub fn from_quality(quality: &str, frame_rate: u32) -> Self {
-        let bitrate = match quality {
-            "low" => 2_000_000,
-            "medium" => 5_000_000,
-            "high" => 8_000_000,
-            "ultra" => 15_000_000,
-            _ => 8_000_000,
-        };
-
-        Self {
-            video_quality: quality.to_string(),
-            frame_rate,
-            bitrate,
-        }
-    }
 
     fn bitrate_bounds_bps(quality: &str) -> (u32, u32) {
         match quality {

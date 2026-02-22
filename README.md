@@ -1,14 +1,25 @@
 # Floorpov
 
-A desktop app for recording WoW gameplay with markers on important events. Supports full monitor or specific window capture with live preview.
+A desktop app for recording WoW gameplay with markers on important events. Recording uses an FFmpeg backend focused on primary monitor capture.
 
 ## Features
 
-- Monitor or window capture via Windows Graphics Capture API
-- Live preview during recording
+- Primary monitor capture via FFmpeg
+- Optional system audio capture (loopback)
+- Quality preset and FPS controls
+- Optional recording diagnostics mode
 - Combat log markers (player deaths, kills)
 - Manual markers via hotkey
 - H.264/MP4 output
+
+## Settings Overview
+
+- **Quality Preset**: controls target recording bitrate profile (higher uses more disk space).
+- **Frame Rate**: target output capture rate (`30` or `60` FPS).
+- **System Audio**: enables desktop/game audio capture.
+- **Recording Diagnostics**: writes per-second FFmpeg/audio pipeline logs for troubleshooting.
+- **Microphone**: not available in the current FFmpeg-only recorder path.
+- **Capture Source**: primary monitor only in the current FFmpeg-only recorder path.
 
 ## Requirements
 
@@ -18,6 +29,9 @@ A desktop app for recording WoW gameplay with markers on important events. Suppo
 - [Bun](https://bun.sh/)
 
 ## Setup
+
+1. Place `ffmpeg.exe` at `src-tauri/bin/ffmpeg.exe`.
+2. Install dependencies and run the app:
 
 ```bash
 bun install
@@ -52,8 +66,8 @@ cargo test
 |-------|------------|
 | Frontend | React 19, TypeScript, Tailwind CSS, Vite |
 | Backend | Tauri 2, Rust |
-| Capture | Windows Graphics Capture API |
-| Recording | H.264/MP4 |
+| Capture | FFmpeg screen capture |
+| Recording | FFmpeg (H.264/MP4) |
 | Hotkeys | tauri-plugin-global-shortcut |
 
 ## License

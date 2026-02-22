@@ -1,6 +1,5 @@
 export type VideoQuality = 'low' | 'medium' | 'high' | 'ultra';
 export type FrameRate = 30 | 60;
-export type CaptureSource = 'primary-monitor' | 'window';
 export type MarkerHotkey = 'F9' | 'F10' | 'F11' | 'F12' | 'none';
 
 export interface RecordingSettings {
@@ -9,10 +8,8 @@ export interface RecordingSettings {
   outputFolder: string;
   wowFolder: string;
   maxStorageGB: number;
-  captureSource: CaptureSource;
-  selectedWindow?: string;
   enableSystemAudio: boolean;
-  enableMicrophone: boolean;
+  enableRecordingDiagnostics: boolean;
   markerHotkey: MarkerHotkey;
 }
 
@@ -22,9 +19,8 @@ export const DEFAULT_SETTINGS: RecordingSettings = {
   outputFolder: '',
   wowFolder: '',
   maxStorageGB: 30,
-  captureSource: 'primary-monitor',
   enableSystemAudio: false,
-  enableMicrophone: false,
+  enableRecordingDiagnostics: false,
   markerHotkey: 'F9',
 };
 

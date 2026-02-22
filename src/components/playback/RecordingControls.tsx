@@ -1,4 +1,4 @@
-import { Circle, Eye, LoaderCircle, Radio, Square, Timer } from "lucide-react";
+import { Circle, LoaderCircle, Radio, Square, Timer } from "lucide-react";
 import { motion, useReducedMotion } from 'motion/react';
 import { useState } from "react";
 import { useRecording } from "../../contexts/RecordingContext";
@@ -7,17 +7,12 @@ import { panelVariants, smoothTransition } from '../../lib/motion';
 
 export function RecordingControls() {
   const reduceMotion = useReducedMotion();
-  const [isPreviewBusy, setIsPreviewBusy] = useState(false);
-  const [previewAction, setPreviewAction] = useState<'starting' | 'stopping' | null>(null);
   const [isRecordingBusy, setIsRecordingBusy] = useState(false);
   const [recordingAction, setRecordingAction] = useState<'starting' | 'stopping' | null>(null);
   const {
     isRecording,
-    isPreviewing,
     lastError,
     recordingDuration,
-    startPreview,
-    stopPreview,
     startRecording,
     stopRecording,
   } = useRecording();
@@ -27,28 +22,6 @@ export function RecordingControls() {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
-
-  const handlePreviewToggle = async () => {
-    if (isPreviewBusy) {
-      return;
-    }
-
-    setIsPreviewBusy(true);
-    const shouldStopPreview = isPreviewing;
-    setPreviewAction(shouldStopPreview ? 'stopping' : 'starting');
-    try {
-      if (shouldStopPreview) {
-        await stopPreview();
-      } else {
-        await startPreview();
-      }
-    } catch (error) {
-      console.error("Preview toggle failed:", error);
-    } finally {
-      setIsPreviewBusy(false);
-      setPreviewAction(null);
-    }
   };
 
   const handleRecordingToggle = async () => {
@@ -81,36 +54,6 @@ export function RecordingControls() {
       animate="animate"
       transition={smoothTransition}
     >
-      <motion.button
-        type="button"
-        onClick={handlePreviewToggle}
-        disabled={isRecording || isPreviewBusy}
-        className={`flex items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 ${
-          isPreviewing
-            ? "border-emerald-300/35 bg-emerald-500/18 hover:bg-emerald-500/25 text-emerald-100"
-            : "border-emerald-300/20 bg-white/5 hover:bg-white/10 text-neutral-200"
-        } disabled:opacity-50 disabled:cursor-not-allowed`}
-        whileHover={reduceMotion ? undefined : { y: -1 }}
-        whileTap={reduceMotion ? undefined : { scale: 0.98 }}
-      >
-        {previewAction ? (
-          <>
-            <LoaderCircle className="w-4 h-4 animate-spin" />
-            {previewAction === 'stopping' ? 'Stopping...' : 'Starting...'}
-          </>
-        ) : isPreviewing ? (
-          <>
-            <Eye className="w-4 h-4" />
-            Stop Preview
-          </>
-        ) : (
-          <>
-            <Eye className="w-4 h-4" />
-            Start Preview
-          </>
-        )}
-      </motion.button>
-
       <motion.button
         type="button"
         onClick={handleRecordingToggle}
@@ -147,10 +90,6 @@ export function RecordingControls() {
           <Timer className="w-3.5 h-3.5 text-emerald-200" />
           <span className="font-mono text-emerald-100">{formatDuration(recordingDuration)}</span>
         </div>
-      )}
-
-      {isPreviewing && !isRecording && (
-        <span className="text-xs text-neutral-300">Preview active</span>
       )}
 
       {!isRecording && settings.markerHotkey !== 'none' && (

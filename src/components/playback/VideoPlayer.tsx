@@ -3,7 +3,6 @@ import { Clapperboard, FolderOpen, LoaderCircle, Maximize, Pause, Play, Volume2,
 import { useVideo } from "../../contexts/VideoContext";
 import { useRecording } from "../../contexts/RecordingContext";
 import { useMarker } from "../../contexts/MarkerContext";
-import { usePreview } from "../../hooks/usePreview";
 import { EventMarker } from "../events/EventMarker";
 import { ControlIconButton } from "./ControlIconButton";
 
@@ -32,21 +31,7 @@ export function VideoPlayer() {
   } = useVideo();
   const { events } = useMarker();
 
-  const {
-    isPreviewing,
-    isRecording,
-    isInitializing,
-    previewFrameUrl,
-    captureWidth,
-    captureHeight,
-  } = useRecording();
-
-  const canvasRef = usePreview({
-    previewFrameUrl,
-    width: captureWidth,
-    height: captureHeight,
-    enabled: isPreviewing || isRecording,
-  });
+  const { isRecording } = useRecording();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
@@ -54,8 +39,7 @@ export function VideoPlayer() {
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [volumeBeforeMute, setVolumeBeforeMute] = useState(1);
 
-  const showCanvas = isPreviewing || isRecording;
-  const showVideo = !showCanvas && videoSrc;
+  const showVideo = Boolean(videoSrc) && !isRecording;
 
   const formatTime = (seconds: number) => {
     if (!seconds || isNaN(seconds)) return "0:00";
@@ -127,12 +111,13 @@ export function VideoPlayer() {
           className="pointer-events-none absolute inset-0 bg-gradient-to-b from-emerald-500/5 via-transparent to-transparent"
           aria-hidden="true"
         />
-        {showCanvas && (
-          <canvas
-            ref={canvasRef}
-            className="h-full w-full"
-            style={{ objectFit: "contain" }}
-          />
+        {isRecording && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/55 backdrop-blur-sm">
+            <div className="mb-3 rounded-full border border-rose-300/30 bg-rose-500/20 p-2">
+              <Clapperboard className="h-5 w-5 text-rose-100" />
+            </div>
+            <p className="text-sm text-rose-100">Recording in progress...</p>
+          </div>
         )}
 
         {showVideo && (
@@ -182,29 +167,22 @@ export function VideoPlayer() {
           </div>
         )}
 
-        {!videoSrc && !showCanvas && (
+        {!videoSrc && !isRecording && (
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            {isInitializing ? (
-              <div className="flex flex-col items-center gap-3">
-                <div className="w-8 h-8 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-                <p className="text-neutral-400 text-sm">Starting preview...</p>
+            <>
+              <div className="mb-3 rounded-full border border-emerald-300/20 bg-emerald-500/10 p-2">
+                <Clapperboard className="h-5 w-5 text-emerald-200" />
               </div>
-            ) : (
-              <>
-                <div className="mb-3 rounded-full border border-emerald-300/20 bg-emerald-500/10 p-2">
-                  <Clapperboard className="h-5 w-5 text-emerald-200" />
-                </div>
-                <p className="text-neutral-400 mb-4">No recording loaded</p>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-2 rounded-md border border-emerald-300/20 bg-white/5 px-4 py-2 text-neutral-200 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/70"
-                >
-                  <FolderOpen className="w-4 h-4" />
-                  Open File
-                </button>
-              </>
-            )}
+              <p className="text-neutral-400 mb-4">No recording loaded</p>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 rounded-md border border-emerald-300/20 bg-white/5 px-4 py-2 text-neutral-200 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/70"
+              >
+                <FolderOpen className="w-4 h-4" />
+                Open File
+              </button>
+            </>
           </div>
         )}
 
