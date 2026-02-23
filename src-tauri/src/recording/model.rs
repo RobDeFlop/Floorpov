@@ -28,6 +28,7 @@ pub(crate) enum CaptureInput {
         input_target: String,
         window_hwnd: Option<usize>,
         window_title: Option<String>,
+        use_wgc: bool,
     },
 }
 
@@ -36,6 +37,19 @@ impl CaptureInput {
         match self {
             CaptureInput::Monitor => "primary_monitor".to_string(),
             CaptureInput::Window { input_target, .. } => input_target.clone(),
+        }
+    }
+
+    pub(crate) fn uses_wgc_window_capture(&self) -> bool {
+        match self {
+            CaptureInput::Window { use_wgc, .. } => *use_wgc,
+            CaptureInput::Monitor => false,
+        }
+    }
+
+    pub(crate) fn disable_wgc_window_capture(&mut self) {
+        if let CaptureInput::Window { use_wgc, .. } = self {
+            *use_wgc = false;
         }
     }
 }
@@ -86,7 +100,6 @@ pub(crate) struct MonitorIndexSearchState {
 
 pub(crate) const FFMPEG_RESOURCE_PATH: &str = "bin/ffmpeg.exe";
 pub(crate) const FFMPEG_STOP_TIMEOUT: Duration = Duration::from_secs(5);
-pub(crate) const FFMPEG_TRANSITION_TIMEOUT: Duration = Duration::from_secs(3);
 pub(crate) const FFMPEG_MODE_SWITCH_TO_BLACK_TIMEOUT: Duration = Duration::from_secs(4);
 pub(crate) const FFMPEG_MODE_SWITCH_TO_WINDOW_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const SYSTEM_AUDIO_SAMPLE_RATE_HZ: usize = 48_000;
@@ -99,7 +112,6 @@ pub(crate) const SYSTEM_AUDIO_QUEUE_CAPACITY: usize = 256;
 #[cfg(target_os = "windows")]
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub(crate) const WINDOW_CAPTURE_STATUS_POLL_INTERVAL: Duration = Duration::from_millis(150);
-pub(crate) const WINDOW_CAPTURE_REGION_CHANGE_DEBOUNCE: Duration = Duration::from_millis(180);
 pub(crate) const WINDOW_CAPTURE_MINIMIZED_WARNING: &str = "Selected window is minimized. Recording continues, but the video may be black until the window is restored.";
 pub(crate) const WINDOW_CAPTURE_CLOSED_WARNING: &str = "Selected window is unavailable or closed. Recording continues, but the video may be black until the window is available again.";
 pub(crate) const WINDOW_CAPTURE_UNAVAILABLE_WARNING: &str = "Selected window is currently unavailable for capture. Recording continues, but the video may be black until the window is available.";

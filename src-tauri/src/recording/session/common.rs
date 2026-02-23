@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use super::super::model::{
     CaptureInput, RuntimeCaptureMode, SharedRecordingState, FFMPEG_MODE_SWITCH_TO_BLACK_TIMEOUT,
-    FFMPEG_MODE_SWITCH_TO_WINDOW_TIMEOUT, FFMPEG_STOP_TIMEOUT, FFMPEG_TRANSITION_TIMEOUT,
+    FFMPEG_MODE_SWITCH_TO_WINDOW_TIMEOUT, FFMPEG_STOP_TIMEOUT,
 };
 
 pub(super) fn to_runtime_capture_mode(capture_input: &CaptureInput) -> RuntimeCaptureMode {
@@ -26,7 +26,6 @@ pub(super) fn runtime_capture_label(runtime_capture_mode: RuntimeCaptureMode) ->
 pub(super) enum RequestedTransitionKind {
     ModeSwitchToBlack,
     ModeSwitchToWindow,
-    RegionRetarget,
 }
 
 pub(super) fn clear_recording_state(state: &SharedRecordingState) {
@@ -81,7 +80,6 @@ pub(super) fn resolve_stop_timeout(
             Some(RequestedTransitionKind::ModeSwitchToWindow) => {
                 FFMPEG_MODE_SWITCH_TO_WINDOW_TIMEOUT
             }
-            Some(RequestedTransitionKind::RegionRetarget) => FFMPEG_TRANSITION_TIMEOUT,
             None => FFMPEG_STOP_TIMEOUT,
         }
     } else {

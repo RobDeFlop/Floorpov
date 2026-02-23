@@ -182,6 +182,19 @@ fn resolve_window_handle(capture_input: &CaptureInput) -> Option<usize> {
 }
 
 #[cfg(target_os = "windows")]
+pub(crate) fn resolve_window_capture_handle(capture_input: &CaptureInput) -> Result<usize, String> {
+    resolve_window_handle(capture_input)
+        .ok_or_else(|| "Failed to resolve selected window handle".to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn resolve_window_capture_handle(
+    _capture_input: &CaptureInput,
+) -> Result<usize, String> {
+    Err("Window capture handles are only supported on Windows".to_string())
+}
+
+#[cfg(target_os = "windows")]
 fn to_window_handle(window_hwnd: usize) -> HWND {
     window_hwnd as isize as HWND
 }
@@ -444,6 +457,7 @@ pub(crate) fn resolve_capture_input(settings: &RecordingSettings) -> Result<Capt
                         input_target: format!("hwnd={hwnd}"),
                         window_hwnd: parse_window_handle(&hwnd),
                         window_title: requested_title.clone(),
+                        use_wgc: true,
                     });
                 }
 
@@ -462,6 +476,7 @@ pub(crate) fn resolve_capture_input(settings: &RecordingSettings) -> Result<Capt
                             input_target: format!("hwnd={}", matching_window.hwnd),
                             window_hwnd: parse_window_handle(&matching_window.hwnd),
                             window_title: Some(title),
+                            use_wgc: true,
                         });
                     }
 
@@ -474,6 +489,7 @@ pub(crate) fn resolve_capture_input(settings: &RecordingSettings) -> Result<Capt
                         input_target: format!("title={title}"),
                         window_hwnd: None,
                         window_title: Some(title),
+                        use_wgc: true,
                     });
                 }
 
@@ -492,6 +508,7 @@ pub(crate) fn resolve_capture_input(settings: &RecordingSettings) -> Result<Capt
                         input_target: format!("hwnd={}", matching_window.hwnd),
                         window_hwnd: parse_window_handle(&matching_window.hwnd),
                         window_title: Some(title),
+                        use_wgc: true,
                     });
                 }
 
@@ -499,6 +516,7 @@ pub(crate) fn resolve_capture_input(settings: &RecordingSettings) -> Result<Capt
                     input_target: format!("title={title}"),
                     window_hwnd: None,
                     window_title: Some(title),
+                    use_wgc: true,
                 });
             }
 

@@ -6,10 +6,10 @@ use std::process::{Command, Stdio};
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager};
 
-use super::model::{
-    CaptureInput, RuntimeCaptureMode, WindowCaptureRegion, CREATE_NO_WINDOW, FFMPEG_RESOURCE_PATH,
+use super::model::{CaptureInput, RuntimeCaptureMode, CREATE_NO_WINDOW, FFMPEG_RESOURCE_PATH};
+use super::window_capture::{
+    resolve_window_capture_handle, resolve_window_capture_region, sanitize_capture_dimensions,
 };
-use super::window_capture::{resolve_window_capture_region, sanitize_capture_dimensions};
 
 pub(crate) fn resolve_ffmpeg_binary_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -98,7 +98,21 @@ fn append_monitor_capture_input_args(command: &mut Command, requested_frame_rate
 fn append_window_capture_input_args(
     command: &mut Command,
     requested_frame_rate: u32,
-    region: WindowCaptureRegion,
+    window_hwnd: usize,
+    capture_width: u32,
+    capture_height: u32,
+) {
+    let (safe_width, safe_height) = sanitize_capture_dimensions(capture_width, capture_height);
+
+    command.arg("-f").arg("lavfi").arg("-i").arg(format!(
+        "gfxcapture=hwnd={window_hwnd}:max_framerate={requested_frame_rate}:capture_cursor=1:capture_border=0:output_fmt=bgra:width={safe_width}:height={safe_height}:resize_mode=scale_aspect,hwdownload,format=bgra",
+    ));
+}
+
+fn append_window_region_capture_input_args(
+    command: &mut Command,
+    requested_frame_rate: u32,
+    region: super::model::WindowCaptureRegion,
 ) {
     command.arg("-f").arg("lavfi").arg("-i").arg(format!(
         "ddagrab=output_idx={}:framerate={requested_frame_rate}:draw_mouse=1:offset_x={}:offset_y={}:video_size={}x{},hwdownload,format=bgra",
@@ -109,7 +123,6 @@ fn append_window_capture_input_args(
 pub(crate) struct RuntimeCaptureInputInfo {
     pub(crate) width: u32,
     pub(crate) height: u32,
-    pub(crate) window_region: Option<WindowCaptureRegion>,
 }
 
 pub(crate) fn append_runtime_capture_input_args(
@@ -124,20 +137,28 @@ pub(crate) fn append_runtime_capture_input_args(
         RuntimeCaptureMode::Monitor => {
             append_monitor_capture_input_args(command, requested_frame_rate);
             let (width, height) = sanitize_capture_dimensions(capture_width, capture_height);
-            Ok(RuntimeCaptureInputInfo {
-                width,
-                height,
-                window_region: None,
-            })
+            Ok(RuntimeCaptureInputInfo { width, height })
         }
         RuntimeCaptureMode::Window => {
-            let region = resolve_window_capture_region(capture_input)?;
-            append_window_capture_input_args(command, requested_frame_rate, region);
-            Ok(RuntimeCaptureInputInfo {
-                width: region.width,
-                height: region.height,
-                window_region: Some(region),
-            })
+            if capture_input.uses_wgc_window_capture() {
+                let window_hwnd = resolve_window_capture_handle(capture_input)?;
+                append_window_capture_input_args(
+                    command,
+                    requested_frame_rate,
+                    window_hwnd,
+                    capture_width,
+                    capture_height,
+                );
+                let (width, height) = sanitize_capture_dimensions(capture_width, capture_height);
+                Ok(RuntimeCaptureInputInfo { width, height })
+            } else {
+                let region = resolve_window_capture_region(capture_input)?;
+                append_window_region_capture_input_args(command, requested_frame_rate, region);
+                Ok(RuntimeCaptureInputInfo {
+                    width: region.width,
+                    height: region.height,
+                })
+            }
         }
         RuntimeCaptureMode::Black => {
             let (safe_width, safe_height) =
@@ -148,7 +169,6 @@ pub(crate) fn append_runtime_capture_input_args(
             Ok(RuntimeCaptureInputInfo {
                 width: safe_width,
                 height: safe_height,
-                window_region: None,
             })
         }
     }

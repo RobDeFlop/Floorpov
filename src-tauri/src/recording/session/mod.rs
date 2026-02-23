@@ -45,6 +45,7 @@ pub(crate) fn spawn_ffmpeg_recording_task(
     mut stop_rx: mpsc::Receiver<()>,
 ) {
     thread::spawn(move || {
+        let mut capture_input = capture_input;
         let (video_encoder, encoder_preset) = select_video_encoder(&ffmpeg_binary_path);
         let mut runtime_capture_mode = to_runtime_capture_mode(&capture_input);
         let capture_target = capture_input.target_label();
@@ -113,7 +114,7 @@ pub(crate) fn spawn_ffmpeg_recording_task(
                 &app_handle,
                 &ffmpeg_binary_path,
                 runtime_capture_mode,
-                &capture_input,
+                &mut capture_input,
                 &segment_output_path,
                 requested_frame_rate,
                 output_frame_rate,

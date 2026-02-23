@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc as std_mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -25,13 +25,12 @@ use super::super::ffmpeg::{
 use super::super::model::CREATE_NO_WINDOW;
 use super::super::model::{
     AudioPipelineStats, CaptureInput, RuntimeCaptureMode, SegmentRunResult, SegmentTransition,
-    WindowCaptureAvailability, WindowCaptureRegion, AUDIO_TCP_ACCEPT_WAIT_MS,
-    SYSTEM_AUDIO_CHANNEL_COUNT, SYSTEM_AUDIO_QUEUE_CAPACITY, SYSTEM_AUDIO_SAMPLE_RATE_HZ,
-    WINDOW_CAPTURE_REGION_CHANGE_DEBOUNCE, WINDOW_CAPTURE_STATUS_POLL_INTERVAL,
+    WindowCaptureAvailability, AUDIO_TCP_ACCEPT_WAIT_MS, SYSTEM_AUDIO_CHANNEL_COUNT,
+    SYSTEM_AUDIO_QUEUE_CAPACITY, SYSTEM_AUDIO_SAMPLE_RATE_HZ, WINDOW_CAPTURE_STATUS_POLL_INTERVAL,
     WINDOW_CAPTURE_UNAVAILABLE_WARNING,
 };
 use super::super::window_capture::{
-    evaluate_window_capture_availability, resolve_window_capture_region,
+    evaluate_window_capture_availability, resolve_window_capture_handle,
     warning_message_for_window_capture,
 };
 use super::common::{
@@ -75,12 +74,38 @@ fn segment_result_for_capture_input_error(
     }
 }
 
+fn should_fallback_window_capture_to_region(
+    capture_input: &CaptureInput,
+    ffmpeg_exit_status: &std::process::ExitStatus,
+    stderr_hints: &[String],
+) -> bool {
+    if !matches!(capture_input, CaptureInput::Window { .. })
+        || !capture_input.uses_wgc_window_capture()
+    {
+        return false;
+    }
+
+    if let Some(exit_code) = ffmpeg_exit_status.code() {
+        if exit_code == -40 || exit_code == 0xD8 {
+            return true;
+        }
+    }
+
+    stderr_hints.iter().any(|line| {
+        line.contains("Failed to setup graphics capture")
+            || line.contains("Failed to start WGC thread")
+            || line.contains("graphics capture")
+            || line.contains("gfxcapture")
+            || line.contains("Function not implemented")
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_ffmpeg_recording_segment(
     app_handle: &AppHandle,
     ffmpeg_binary_path: &Path,
     runtime_capture_mode: RuntimeCaptureMode,
-    capture_input: &CaptureInput,
+    capture_input: &mut CaptureInput,
     output_path: &Path,
     requested_frame_rate: u32,
     output_frame_rate: u32,
@@ -97,7 +122,6 @@ pub(super) fn run_ffmpeg_recording_segment(
     let maxrate_string = bitrate.to_string();
     let buffer_size_string = bitrate.saturating_mul(2).to_string();
     let output_path_string = output_path.to_string_lossy().to_string();
-    let mut active_window_region: Option<WindowCaptureRegion>;
 
     tracing::info!(
         ffmpeg_path = %ffmpeg_binary_path.display(),
@@ -194,7 +218,6 @@ pub(super) fn run_ffmpeg_recording_segment(
                 );
             }
         };
-        active_window_region = capture_input_info.window_region;
 
         let video_filter = resolve_video_filter(
             runtime_capture_mode,
@@ -244,7 +267,6 @@ pub(super) fn run_ffmpeg_recording_segment(
                 );
             }
         };
-        active_window_region = capture_input_info.window_region;
 
         let video_filter = resolve_video_filter(
             runtime_capture_mode,
@@ -297,6 +319,8 @@ pub(super) fn run_ffmpeg_recording_segment(
         emit_recording_warning_cleared(app_handle);
     }
 
+    let stderr_hints: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let stderr_hints_for_thread = Arc::clone(&stderr_hints);
     let stderr_thread = child.stderr.take().map(|stderr| {
         let diagnostics_enabled = enable_diagnostics;
         thread::spawn(move || {
@@ -331,8 +355,19 @@ pub(super) fn run_ffmpeg_recording_segment(
                             if diagnostics_enabled {
                                 tracing::info!("ffmpeg: {content}");
                             }
-                        } else if diagnostics_enabled {
-                            tracing::debug!("ffmpeg: {content}");
+                        } else {
+                            let trimmed = content.trim();
+                            if !trimmed.is_empty() {
+                                if let Ok(mut hints) = stderr_hints_for_thread.lock() {
+                                    if hints.len() < 32 {
+                                        hints.push(trimmed.to_string());
+                                    }
+                                }
+
+                                if diagnostics_enabled {
+                                    tracing::debug!("ffmpeg: {trimmed}");
+                                }
+                            }
                         }
                     }
                     Ok(_) => {}
@@ -431,7 +466,6 @@ pub(super) fn run_ffmpeg_recording_segment(
     let mut stop_requested_by_user = false;
     let mut requested_transition: Option<RuntimeCaptureMode> = None;
     let mut requested_transition_kind: Option<RequestedTransitionKind> = None;
-    let mut pending_window_region_change: Option<(WindowCaptureRegion, Instant)> = None;
 
     let exit_status = loop {
         if stop_requested_at.is_none() {
@@ -551,15 +585,11 @@ pub(super) fn run_ffmpeg_recording_segment(
                     RuntimeCaptureMode::Black
                         if capture_availability == WindowCaptureAvailability::Available =>
                     {
-                        match resolve_window_capture_region(capture_input) {
-                            Ok(region) => {
+                        match resolve_window_capture_handle(capture_input) {
+                            Ok(window_hwnd) => {
                                 tracing::info!(
-                                    output_idx = region.output_idx,
-                                    offset_x = region.offset_x,
-                                    offset_y = region.offset_y,
-                                    width = region.width,
-                                    height = region.height,
-                                    "Window capture region is ready; restoring capture from black mode"
+                                    window_hwnd,
+                                    "Window capture target is ready; restoring capture from black mode"
                                 );
                                 requested_transition = Some(RuntimeCaptureMode::Window);
                                 requested_transition_kind =
@@ -573,75 +603,13 @@ pub(super) fn run_ffmpeg_recording_segment(
                             }
                             Err(error) => {
                                 tracing::debug!(
-                                    "Window is available but capture region is not ready yet: {error}"
+                                    "Window is available but capture target is not ready yet: {error}"
                                 );
                             }
                         }
                     }
                     _ => {}
                 }
-            }
-
-            if requested_transition.is_none()
-                && matches!(runtime_capture_mode, RuntimeCaptureMode::Window)
-                && capture_availability == WindowCaptureAvailability::Available
-            {
-                match resolve_window_capture_region(capture_input) {
-                    Ok(current_region) => {
-                        if let Some(previous_region) = active_window_region {
-                            if current_region != previous_region {
-                                match pending_window_region_change {
-                                    Some((pending_region, changed_at))
-                                        if pending_region == current_region
-                                            && changed_at.elapsed()
-                                                >= WINDOW_CAPTURE_REGION_CHANGE_DEBOUNCE =>
-                                    {
-                                        tracing::info!(
-                                            old_output_idx = previous_region.output_idx,
-                                            old_offset_x = previous_region.offset_x,
-                                            old_offset_y = previous_region.offset_y,
-                                            old_width = previous_region.width,
-                                            old_height = previous_region.height,
-                                            new_output_idx = current_region.output_idx,
-                                            new_offset_x = current_region.offset_x,
-                                            new_offset_y = current_region.offset_y,
-                                            new_width = current_region.width,
-                                            new_height = current_region.height,
-                                            "Window capture region changed; restarting capture segment"
-                                        );
-                                        requested_transition = Some(RuntimeCaptureMode::Window);
-                                        requested_transition_kind =
-                                            Some(RequestedTransitionKind::RegionRetarget);
-                                        request_ffmpeg_graceful_stop(
-                                            &mut stop_requested_at,
-                                            &mut child,
-                                            &audio_capture_stop_tx,
-                                            &audio_writer_stop_tx,
-                                        );
-                                    }
-                                    Some((pending_region, _))
-                                        if pending_region == current_region => {}
-                                    _ => {
-                                        pending_window_region_change =
-                                            Some((current_region, Instant::now()));
-                                    }
-                                }
-                            } else {
-                                pending_window_region_change = None;
-                            }
-                        } else {
-                            active_window_region = Some(current_region);
-                            pending_window_region_change = None;
-                        }
-                    }
-                    Err(error) => {
-                        tracing::debug!(
-                            "Failed to resolve window capture region while polling: {error}"
-                        );
-                    }
-                }
-            } else if capture_availability != WindowCaptureAvailability::Available {
-                pending_window_region_change = None;
             }
         }
 
@@ -659,6 +627,11 @@ pub(super) fn run_ffmpeg_recording_segment(
             tracing::warn!("Failed to join FFmpeg stderr thread: {error:?}");
         }
     }
+
+    let stderr_hint_lines = stderr_hints
+        .lock()
+        .map(|lines| lines.clone())
+        .unwrap_or_default();
 
     if let Some(audio_capture_thread) = audio_capture_thread {
         match audio_capture_thread.join() {
@@ -696,6 +669,24 @@ pub(super) fn run_ffmpeg_recording_segment(
             true
         }
         Ok(status) => {
+            if should_fallback_window_capture_to_region(capture_input, &status, &stderr_hint_lines)
+            {
+                tracing::warn!(
+                    exit_status = %status,
+                    "WGC window capture failed. Falling back to region-based window capture"
+                );
+                capture_input.disable_wgc_window_capture();
+                emit_recording_warning(
+                    app_handle,
+                    "Exclusive window capture is unavailable on this system. Falling back to region-based capture, so overlapping windows may appear.",
+                );
+            }
+
+            if !stderr_hint_lines.is_empty() {
+                let joined_hints = stderr_hint_lines.join(" | ");
+                tracing::warn!(ffmpeg_stderr = %joined_hints, "FFmpeg stderr details");
+            }
+
             if requested_transition.is_some() || stop_requested_by_user {
                 tracing::warn!("FFmpeg recording process exited while transitioning: {status}");
             } else {
