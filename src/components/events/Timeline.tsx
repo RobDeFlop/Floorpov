@@ -5,6 +5,7 @@ import { EventMarker } from "./EventMarker";
 import { useVideo } from "../../contexts/VideoContext";
 import { useMarker } from "../../contexts/MarkerContext";
 import { GameEvent } from "../../types/events";
+import { formatTime } from "../../utils/format";
 
 export function Timeline() {
   const { currentTime, duration, seek } = useVideo();
@@ -15,13 +16,6 @@ export function Timeline() {
   const progressRef = useRef<HTMLDivElement>(null);
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
-
-  const formatTime = (seconds: number) => {
-    if (isNaN(seconds)) return "0:00";
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
 
   const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!progressRef.current || duration === 0) return;

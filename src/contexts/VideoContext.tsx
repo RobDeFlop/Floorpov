@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useRef, useCallback, useEffect, ReactNode } from "react";
+import { VIDEO_LOADING_TIMEOUT_MS, VOLUME_MAX, VOLUME_MIN } from "../types/settings";
 
 interface VideoContextType {
   videoRef: React.RefObject<HTMLVideoElement | null>;
@@ -29,6 +30,7 @@ export function VideoProvider({ children }: { children: ReactNode }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const loadingTimeoutRef = useRef<number | null>(null);
+  const videoSrcRef = useRef<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -84,12 +86,12 @@ export function VideoProvider({ children }: { children: ReactNode }) {
       loadingTimeoutRef.current = window.setTimeout(() => {
         setIsVideoLoading(false);
         loadingTimeoutRef.current = null;
-      }, 8000);
+      }, VIDEO_LOADING_TIMEOUT_MS);
     }
   }, []);
 
   const setVolume = useCallback((vol: number) => {
-    const nextVolume = Math.min(1, Math.max(0, vol));
+    const nextVolume = Math.min(VOLUME_MAX, Math.max(VOLUME_MIN, vol));
 
     if (videoRef.current) {
       videoRef.current.volume = nextVolume;
@@ -109,33 +111,38 @@ export function VideoProvider({ children }: { children: ReactNode }) {
     setPlaybackRateState(rate);
   }, []);
 
-  const loadVideo = useCallback((src: string) => {
-    if (src === videoSrc) {
-      if (videoRef.current) {
-        videoRef.current.pause();
-        videoRef.current.currentTime = 0;
+  const loadVideo = useCallback(
+    (src: string) => {
+      const currentSrc = videoSrcRef.current;
+      if (src === currentSrc) {
+        if (videoRef.current) {
+          videoRef.current.pause();
+          videoRef.current.currentTime = 0;
+        }
+        setCurrentTime(0);
+        setIsPlaying(false);
+        setVideoLoading(false);
+        return;
       }
+
+      if (objectUrlRef.current && objectUrlRef.current !== src) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+
+      if (src.startsWith("blob:")) {
+        objectUrlRef.current = src;
+      }
+
+      videoSrcRef.current = src;
+      setVideoSrc(src);
       setCurrentTime(0);
+      setDuration(0);
       setIsPlaying(false);
-      setVideoLoading(false);
-      return;
-    }
-
-    if (objectUrlRef.current && objectUrlRef.current !== src) {
-      URL.revokeObjectURL(objectUrlRef.current);
-      objectUrlRef.current = null;
-    }
-
-    if (src.startsWith("blob:")) {
-      objectUrlRef.current = src;
-    }
-
-    setVideoSrc(src);
-    setCurrentTime(0);
-    setDuration(0);
-    setIsPlaying(false);
-    setVideoLoading(true);
-  }, [setVideoLoading, videoSrc]);
+      setVideoLoading(true);
+    },
+    [setVideoLoading]
+  );
 
   useEffect(() => {
     return () => {

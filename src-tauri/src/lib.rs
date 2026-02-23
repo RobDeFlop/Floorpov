@@ -9,11 +9,6 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tokio::sync::RwLock;
 
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
-#[tauri::command]
 fn is_debug_build() -> bool {
     cfg!(debug_assertions)
 }
@@ -78,7 +73,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            greet,
             is_debug_build,
             recording::start_recording,
             recording::stop_recording,

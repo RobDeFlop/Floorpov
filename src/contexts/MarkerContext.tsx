@@ -10,20 +10,45 @@ interface MarkerContextType {
 
 const MarkerContext = createContext<MarkerContextType | undefined>(undefined);
 
+function sortEventsByTimestamp(unsortedEvents: GameEvent[]): GameEvent[] {
+  return [...unsortedEvents].sort((a, b) => a.timestamp - b.timestamp);
+}
+
+function insertEventByTimestamp(sortedEvents: GameEvent[], nextEvent: GameEvent): GameEvent[] {
+  if (
+    sortedEvents.length === 0 ||
+    sortedEvents[sortedEvents.length - 1].timestamp <= nextEvent.timestamp
+  ) {
+    return [...sortedEvents, nextEvent];
+  }
+
+  let low = 0;
+  let high = sortedEvents.length;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (sortedEvents[middle].timestamp <= nextEvent.timestamp) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  const nextEvents = [...sortedEvents];
+  nextEvents.splice(low, 0, nextEvent);
+  return nextEvents;
+}
+
 export function MarkerProvider({ children }: { children: ReactNode }) {
   const [events, setEvents] = useState<GameEvent[]>([]);
 
-  const sortEventsByTimestamp = useCallback((unsortedEvents: GameEvent[]) => {
-    return [...unsortedEvents].sort((a, b) => a.timestamp - b.timestamp);
-  }, []);
-
   const addEvent = useCallback((event: GameEvent) => {
-    setEvents((prev) => sortEventsByTimestamp([...prev, event]));
-  }, [sortEventsByTimestamp]);
+    setEvents((previousEvents) => insertEventByTimestamp(previousEvents, event));
+  }, []);
 
   const replaceEvents = useCallback((nextEvents: GameEvent[]) => {
     setEvents(sortEventsByTimestamp(nextEvents));
-  }, [sortEventsByTimestamp]);
+  }, []);
 
   const clearEvents = useCallback(() => {
     setEvents([]);

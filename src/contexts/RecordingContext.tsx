@@ -3,7 +3,8 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useSettings } from "./SettingsContext";
 import { useMarker } from "./MarkerContext";
-import { QUALITY_SETTINGS } from "../types/settings";
+import { QUALITY_SETTINGS, RECORDING_EVENT_TIMEOUT_MS } from "../types/settings";
+import { getErrorMessage } from "../services/tauri";
 import {
   convertCombatEvent,
   convertRecordingMetadataToGameEvents,
@@ -36,18 +37,13 @@ interface CleanupResult {
 
 interface RecordingContextType {
   isRecording: boolean;
-  isPreviewing: boolean;
-  isInitializing: boolean;
   lastError: string | null;
   recordingWarning: string | null;
-  previewFrameUrl: string | null;
   captureWidth: number;
   captureHeight: number;
   recordingPath: string | null;
   recordingDuration: number;
   loadPlaybackMetadata: (filePath: string) => Promise<void>;
-  startPreview: () => Promise<void>;
-  stopPreview: () => Promise<void>;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
 }
@@ -103,26 +99,6 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const getErrorMessage = (error: unknown): string => {
-    if (typeof error === "string") {
-      return error;
-    }
-
-    if (error && typeof error === "object") {
-      const maybeMessage = (error as { message?: unknown }).message;
-      if (typeof maybeMessage === "string") {
-        return maybeMessage;
-      }
-
-      const maybeError = (error as { error?: unknown }).error;
-      if (typeof maybeError === "string") {
-        return maybeError;
-      }
-    }
-
-    return String(error);
-  };
-
   useEffect(() => {
     let intervalId: number | undefined;
 
@@ -175,14 +151,6 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       unlistenCombatEvent.then((unsubscribe) => unsubscribe());
     };
   }, [addEvent]);
-
-  const startPreview = async () => {
-    return Promise.resolve();
-  };
-
-  const stopPreview = async () => {
-    return Promise.resolve();
-  };
 
   const loadPlaybackMetadata = async (filePath: string) => {
     if (isRecording) {
@@ -274,8 +242,8 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const stopRecording = async () => {
     setLastError(null);
     try {
-      const waitForFinalize = waitForEvent("recording-finalized", 15000);
-      const waitForStopped = waitForEvent("recording-stopped", 15000);
+      const waitForFinalize = waitForEvent("recording-finalized", RECORDING_EVENT_TIMEOUT_MS);
+      const waitForStopped = waitForEvent("recording-stopped", RECORDING_EVENT_TIMEOUT_MS);
 
       await invoke("stop_combat_watch").catch(() => undefined);
       await invoke("stop_recording");
@@ -306,18 +274,13 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     <RecordingContext.Provider
       value={{
         isRecording,
-        isPreviewing: false,
-        isInitializing: false,
         lastError,
         recordingWarning,
-        previewFrameUrl: null,
         captureWidth,
         captureHeight,
         recordingPath,
         recordingDuration,
         loadPlaybackMetadata,
-        startPreview,
-        stopPreview,
         startRecording,
         stopRecording,
       }}
@@ -329,7 +292,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
 export function useRecording() {
   const context = useContext(RecordingContext);
-  if (context === undefined) {
+  if (!context) {
     throw new Error("useRecording must be used within a RecordingProvider");
   }
   return context;

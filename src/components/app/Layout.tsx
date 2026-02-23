@@ -14,6 +14,7 @@ import { RecordingProvider } from "../../contexts/RecordingContext";
 import { SettingsProvider } from "../../contexts/SettingsContext";
 import { MarkerProvider } from "../../contexts/MarkerContext";
 import { panelVariants, smoothTransition } from "../../lib/motion";
+import { MEDIA_SECTION_RESIZE_DELTA } from "../../types/settings";
 
 type AppView = "main" | "settings" | "debug" | "mythic-plus" | "raid" | "pvp";
 
@@ -139,13 +140,13 @@ export function Layout() {
                         onKeyDown={(event) => {
                           if (event.key === "ArrowUp") {
                             event.preventDefault();
-                            adjustMediaSectionHeight(-24);
+                            adjustMediaSectionHeight(-MEDIA_SECTION_RESIZE_DELTA);
                             return;
                           }
 
                           if (event.key === "ArrowDown") {
                             event.preventDefault();
-                            adjustMediaSectionHeight(24);
+                            adjustMediaSectionHeight(MEDIA_SECTION_RESIZE_DELTA);
                           }
                         }}
                         role="separator"

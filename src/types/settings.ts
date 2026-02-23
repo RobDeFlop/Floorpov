@@ -42,9 +42,15 @@ export const MIN_STORAGE_GB = 5;
 export const MAX_STORAGE_GB = 1000;
 
 export const HOTKEY_OPTIONS = [
-  { value: 'F9', label: 'F9' },
-  { value: 'F10', label: 'F10' },
-  { value: 'F11', label: 'F11' },
-  { value: 'F12', label: 'F12' },
-  { value: 'none', label: 'None (Disabled)' },
+  { value: "F9", label: "F9" },
+  { value: "F10", label: "F10" },
+  { value: "F11", label: "F11" },
+  { value: "F12", label: "F12" },
+  { value: "none", label: "None (Disabled)" },
 ] as const;
+
+export const RECORDING_EVENT_TIMEOUT_MS = 15000;
+export const VIDEO_LOADING_TIMEOUT_MS = 8000;
+export const VOLUME_MIN = 0;
+export const VOLUME_MAX = 1;
+export const MEDIA_SECTION_RESIZE_DELTA = 24;

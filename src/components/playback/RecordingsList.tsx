@@ -8,6 +8,7 @@ import { useVideo } from '../../contexts/VideoContext';
 import { useRecording } from '../../contexts/RecordingContext';
 import { panelVariants, smoothTransition } from '../../lib/motion';
 import { useRecordingSelection } from './useRecordingSelection';
+import { formatBytes, formatDate } from '../../utils/format';
 
 interface RecordingInfo {
   filename: string;
@@ -17,17 +18,6 @@ interface RecordingInfo {
   zone_name?: string;
   encounter_name?: string;
   encounter_category?: string;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-function formatDate(timestampSeconds: number): string {
-  return new Date(timestampSeconds * 1000).toLocaleString();
 }
 
 export function RecordingsList() {

@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -13,32 +14,31 @@ import {
   Volume2,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRecording } from "../../contexts/RecordingContext";
 import { useSettings } from "../../contexts/SettingsContext";
 import { Button } from "../ui/Button";
 import { FormField } from "../ui/FormField";
 import {
   CaptureSource,
+  FrameRate,
   HOTKEY_OPTIONS,
   MAX_STORAGE_GB,
+  MarkerHotkey,
   MIN_STORAGE_GB,
   QUALITY_SETTINGS,
   RecordingSettings,
+  VideoQuality,
 } from "../../types/settings";
 import { ReadOnlyPathField } from "./ReadOnlyPathField";
 import { SettingsSection } from "./SettingsSection";
 import { SettingsSelect, type SettingsSelectOption } from "./SettingsSelect";
 import { SettingsToggleField } from "./SettingsToggleField";
+import { shallowEqual } from "../../utils/comparison";
+import { formatBytes } from "../../utils/format";
+import { CaptureWindowInfo } from "../../types/recording";
 
 interface SettingsProps {
   onBack: () => void;
-}
-
-interface CaptureWindowInfo {
-  hwnd: string;
-  title: string;
-  process_name: string | null;
 }
 
 const VIDEO_QUALITY_OPTIONS: SettingsSelectOption[] = Object.entries(QUALITY_SETTINGS).map(
@@ -82,6 +82,18 @@ function formatCaptureWindowLabel(title: string, processName: string | null): st
 
 function isStorageLimitWithinBounds(maxStorageGB: number): boolean {
   return maxStorageGB >= MIN_STORAGE_GB && maxStorageGB <= MAX_STORAGE_GB;
+}
+
+function isVideoQuality(value: string): value is VideoQuality {
+  return Object.prototype.hasOwnProperty.call(QUALITY_SETTINGS, value);
+}
+
+function isFrameRate(value: number): value is FrameRate {
+  return value === 30 || value === 60;
+}
+
+function isMarkerHotkey(value: string): value is MarkerHotkey {
+  return HOTKEY_OPTIONS.some((option) => option.value === value);
 }
 
 export function Settings({ onBack }: SettingsProps) {
@@ -140,7 +152,7 @@ export function Settings({ onBack }: SettingsProps) {
   }, [formData.wowFolder]);
 
   useEffect(() => {
-    setHasChanges(JSON.stringify(formData) !== JSON.stringify(settings));
+    setHasChanges(!shallowEqual(formData, settings));
   }, [formData, settings]);
 
   const loadCaptureWindows = useCallback(async () => {
@@ -224,11 +236,6 @@ export function Settings({ onBack }: SettingsProps) {
     } catch (error) {
       console.error("Failed to open WoW folder picker:", error);
     }
-  };
-
-  const formatBytes = (bytes: number) => {
-    const gb = bytes / (1024 ** 3);
-    return gb.toFixed(2) + " GB";
   };
 
   const usagePercentage = formData.maxStorageGB > 0 
@@ -335,7 +342,11 @@ export function Settings({ onBack }: SettingsProps) {
                   id={FIELD_IDS.videoQuality}
                   value={formData.videoQuality}
                   options={VIDEO_QUALITY_OPTIONS}
-                  onChange={(nextValue) => setFormData({ ...formData, videoQuality: nextValue as any })}
+                  onChange={(nextValue) => {
+                    if (isVideoQuality(nextValue)) {
+                      setFormData({ ...formData, videoQuality: nextValue });
+                    }
+                  }}
                   ariaDescribedBy="settings-video-quality-help"
                 />
                 <p id="settings-video-quality-help" className="mt-1 text-xs text-neutral-400">
@@ -350,7 +361,10 @@ export function Settings({ onBack }: SettingsProps) {
                   value={String(formData.frameRate)}
                   options={FRAME_RATE_OPTIONS}
                   onChange={(nextValue) => {
-                    setFormData({ ...formData, frameRate: parseInt(nextValue) as any });
+                    const nextFrameRate = Number(nextValue);
+                    if (isFrameRate(nextFrameRate)) {
+                      setFormData({ ...formData, frameRate: nextFrameRate });
+                    }
                   }}
                 />
                 <p className="mt-1 text-xs text-neutral-400">
@@ -546,7 +560,11 @@ export function Settings({ onBack }: SettingsProps) {
                   id={FIELD_IDS.markerHotkey}
                   value={formData.markerHotkey}
                   options={MARKER_HOTKEY_OPTIONS}
-                  onChange={(nextValue) => setFormData({ ...formData, markerHotkey: nextValue as any })}
+                  onChange={(nextValue) => {
+                    if (isMarkerHotkey(nextValue)) {
+                      setFormData({ ...formData, markerHotkey: nextValue });
+                    }
+                  }}
                   ariaDescribedBy="settings-marker-hotkey-help"
                 />
                 <p id="settings-marker-hotkey-help" className="mt-1 text-xs text-neutral-400">

@@ -15,6 +15,7 @@ import { useRecording } from "../../contexts/RecordingContext";
 import { useMarker } from "../../contexts/MarkerContext";
 import { EventMarker } from "../events/EventMarker";
 import { ControlIconButton } from "./ControlIconButton";
+import { formatTime } from "../../utils/format";
 
 const PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
 
@@ -50,13 +51,6 @@ export function VideoPlayer() {
   const [volumeBeforeMute, setVolumeBeforeMute] = useState(1);
 
   const showVideo = Boolean(videoSrc) && !isRecording;
-
-  const formatTime = (seconds: number) => {
-    if (!seconds || isNaN(seconds)) return "0:00";
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
 
   const handleVolumeToggle = () => {
     if (volume === 0) {

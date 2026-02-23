@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { Store } from '@tauri-apps/plugin-store';
-import { invoke } from '@tauri-apps/api/core';
 import { RecordingSettings, DEFAULT_SETTINGS } from '../types/settings';
+import { invoke } from '@tauri-apps/api/core';
 
 interface SettingsContextType {
   settings: RecordingSettings;
@@ -140,9 +140,22 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const resetToDefaults = () => {
-    setSettings(DEFAULT_SETTINGS);
-  };
+  const resetToDefaults = useCallback(async () => {
+    if (!store) return;
+    
+    try {
+      await store.set('recording-settings', DEFAULT_SETTINGS);
+      await store.save();
+      setSettings(DEFAULT_SETTINGS);
+      
+      if (settings.markerHotkey !== 'none') {
+        await invoke('unregister_marker_hotkey');
+      }
+    } catch (error) {
+      console.error('Failed to reset settings:', error);
+      throw error;
+    }
+  }, [store, settings.markerHotkey]);
 
   return (
     <SettingsContext.Provider value={{ settings, isLoading, updateSettings, resetToDefaults }}>
