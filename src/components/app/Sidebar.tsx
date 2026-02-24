@@ -11,9 +11,11 @@ import {
   Trophy,
 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { type ComponentType, useState } from "react";
+import { useState } from "react";
 import { useRecording } from "../../contexts/RecordingContext";
-import { Button } from "../ui/Button";
+import { SidebarDividerBlock } from "./sidebar/SidebarDividerBlock";
+import { SidebarNavButton } from "./sidebar/SidebarNavButton";
+import { SidebarSectionLabel } from "./sidebar/SidebarSectionLabel";
 
 
 const gameModes = ["Mythic+", "Raid", "PvP"];
@@ -23,39 +25,6 @@ interface SidebarProps {
   onNavigate: (view: "main" | "settings" | "debug" | "mythic-plus" | "raid" | "pvp") => void;
   currentView: "main" | "settings" | "debug" | "mythic-plus" | "raid" | "pvp";
   isDebugMode: boolean;
-}
-
-interface SidebarNavButtonProps {
-  label: string;
-  icon?: ComponentType<{ className?: string }>;
-  isActive: boolean;
-  activeClassName: string;
-  defaultClassName: string;
-  onClick: () => void;
-  reduceMotion: boolean | null;
-}
-
-function SidebarNavButton({
-  label,
-  icon: Icon,
-  isActive,
-  activeClassName,
-  defaultClassName,
-  onClick,
-}: SidebarNavButtonProps) {
-  return (
-    <Button
-      variant="ghost"
-      onClick={onClick}
-      className={`flex w-full items-center gap-2 ${
-        isActive ? activeClassName : defaultClassName
-      }`}
-      ariaLabel={label}
-    >
-      {Icon && <Icon className="h-4 w-4" />}
-      {label}
-    </Button>
-  );
 }
 
 export function Sidebar({ onNavigate, currentView, isDebugMode }: SidebarProps) {
@@ -140,11 +109,9 @@ export function Sidebar({ onNavigate, currentView, isDebugMode }: SidebarProps) 
   };
 
   return (
-    <aside className="flex w-full shrink-0 flex-col border-b border-white/10 bg-[var(--surface-1)]/95 backdrop-blur-md lg:w-56 lg:border-b-0 lg:border-r">
-      <div className="border-b border-white/10 px-3 py-3">
-        <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-300">
-          Navigation
-        </div>
+    <aside className="flex w-full shrink-0 flex-col border-b border-white/10 bg-[var(--surface-1)] backdrop-blur-md lg:w-56 lg:border-b-0 lg:border-r">
+      <div className="px-3 py-3">
+        <SidebarSectionLabel label="Navigation" />
         <nav className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-1" aria-label="Primary">
           <SidebarNavButton
             label="Home"
@@ -153,7 +120,6 @@ export function Sidebar({ onNavigate, currentView, isDebugMode }: SidebarProps) 
             activeClassName="border-emerald-300/30 bg-emerald-500/15 text-emerald-100"
             defaultClassName="border-transparent text-neutral-300 hover:border-white/20 hover:bg-white/5 hover:text-neutral-100"
             onClick={() => onNavigate("main")}
-            reduceMotion={reduceMotion}
           />
           <SidebarNavButton
             label="Settings"
@@ -162,21 +128,19 @@ export function Sidebar({ onNavigate, currentView, isDebugMode }: SidebarProps) 
             activeClassName="border-emerald-300/30 bg-emerald-500/15 text-emerald-100"
             defaultClassName="border-transparent text-neutral-300 hover:border-white/20 hover:bg-white/5 hover:text-neutral-100"
             onClick={() => onNavigate("settings")}
-            reduceMotion={reduceMotion}
           />
         </nav>
       </div>
 
-      <nav className="flex-1 p-3" aria-label="Game mode">
-        <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-300">
-          Game Mode
-        </div>
-        <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-1">
-            {gameModes.map((mode) => {
-             const isActive = 
-               (mode === "Mythic+" && currentView === "mythic-plus") ||
-               (mode === "Raid" && currentView === "raid") ||
-               (mode === "PvP" && currentView === "pvp");
+      <nav className="flex-1 px-3 pb-3" aria-label="Game mode">
+        <SidebarDividerBlock>
+          <SidebarSectionLabel label="Game Mode" />
+          <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-1">
+              {gameModes.map((mode) => {
+              const isActive = 
+                (mode === "Mythic+" && currentView === "mythic-plus") ||
+                (mode === "Raid" && currentView === "raid") ||
+                (mode === "PvP" && currentView === "pvp");
              
              const getGameModeIcon = () => {
                switch (mode) {
@@ -205,28 +169,26 @@ export function Sidebar({ onNavigate, currentView, isDebugMode }: SidebarProps) 
                }
              };
              
-             return (
-               <SidebarNavButton
-                 key={mode}
-                 label={mode}
-                 icon={getGameModeIcon()}
-                 isActive={isActive}
-                 activeClassName="border-emerald-300/30 bg-emerald-500/15 text-emerald-100"
-                 defaultClassName="border-transparent text-neutral-300 hover:border-white/20 hover:bg-white/5 hover:text-neutral-100"
-                 onClick={navigateTo}
-                 reduceMotion={reduceMotion}
-               />
-             );
-           })}
-        </div>
+              return (
+                <SidebarNavButton
+                  key={mode}
+                  label={mode}
+                  icon={getGameModeIcon()}
+                  isActive={isActive}
+                  activeClassName="border-emerald-300/30 bg-emerald-500/15 text-emerald-100"
+                  defaultClassName="border-transparent text-neutral-300 hover:border-white/20 hover:bg-white/5 hover:text-neutral-100"
+                  onClick={navigateTo}
+                />
+              );
+            })}
+          </div>
+        </SidebarDividerBlock>
       </nav>
 
       <div className="p-3">
         {isDebugMode && (
-          <div className="mb-2 border-t border-white/5 pt-3 mt-3">
-            <div className="mb-1.5 text-[10px] uppercase tracking-[0.12em] text-neutral-600">
-              Developer
-            </div>
+          <SidebarDividerBlock>
+            <SidebarSectionLabel label="Developer" />
             <SidebarNavButton
               label="Debug"
               icon={Bug}
@@ -234,9 +196,8 @@ export function Sidebar({ onNavigate, currentView, isDebugMode }: SidebarProps) 
               activeClassName="border-neutral-300/25 bg-neutral-500/10 text-neutral-200"
               defaultClassName="border-transparent text-neutral-500 hover:border-neutral-300/15 hover:bg-white/3 hover:text-neutral-300"
               onClick={() => onNavigate("debug")}
-              reduceMotion={reduceMotion}
             />
-          </div>
+          </SidebarDividerBlock>
         )}
 
         <motion.button

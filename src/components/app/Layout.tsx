@@ -17,9 +17,11 @@ import { panelVariants, smoothTransition } from "../../lib/motion";
 import { MEDIA_SECTION_RESIZE_DELTA } from "../../types/settings";
 
 type AppView = "main" | "settings" | "debug" | "mythic-plus" | "raid" | "pvp";
+const GAME_MODE_VIEWS = new Set<AppView>(["mythic-plus", "raid", "pvp"]);
 
 export function Layout() {
   const [currentView, setCurrentView] = useState<AppView>("main");
+  const [gameModeNavigationVersion, setGameModeNavigationVersion] = useState(0);
   const [isDebugBuild, setIsDebugBuild] = useState(false);
   const [isResizingMedia, setIsResizingMedia] = useState(false);
   const [mediaSectionHeight, setMediaSectionHeight] = useState(() =>
@@ -100,6 +102,14 @@ export function Layout() {
     });
   };
 
+  const handleNavigate = (view: AppView) => {
+    setCurrentView(view);
+
+    if (GAME_MODE_VIEWS.has(view)) {
+      setGameModeNavigationVersion((currentVersion) => currentVersion + 1);
+    }
+  };
+
   return (
     <VideoProvider>
       <SettingsProvider>
@@ -109,7 +119,7 @@ export function Layout() {
               <TitleBar />
               <div className="flex flex-1 min-h-0 flex-col gap-2 p-2 md:flex-row md:gap-3 md:p-3">
                 <Sidebar 
-                  onNavigate={setCurrentView}
+                  onNavigate={handleNavigate}
                   currentView={currentView}
                   isDebugMode={isDebugBuild}
                 />
@@ -117,7 +127,7 @@ export function Layout() {
                   {currentView === "main" ? (
                     <motion.div
                       key="main-view"
-                      className={`flex-1 flex flex-col min-w-0 rounded-md border border-white/10 bg-[var(--surface-0)] shadow-[var(--surface-glow)] overflow-hidden ${isResizingMedia ? "select-none" : ""}`}
+                      className={`flex-1 flex flex-col min-w-0 rounded-md border border-white/10 bg-[var(--surface-1)] shadow-[var(--surface-glow)] overflow-hidden ${isResizingMedia ? "select-none" : ""}`}
                       variants={panelVariants}
                       initial={reduceMotion ? false : "initial"}
                       animate="animate"
@@ -165,50 +175,53 @@ export function Layout() {
                   ) : currentView === "settings" ? (
                     <motion.div
                       key="settings-view"
-                      className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-md border border-white/10 bg-[var(--surface-0)] shadow-[var(--surface-glow)] overflow-hidden"
+                      className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-md border border-white/10 bg-[var(--surface-1)] shadow-[var(--surface-glow)] overflow-hidden"
                       variants={panelVariants}
                       initial={reduceMotion ? false : "initial"}
                       animate="animate"
                       exit={reduceMotion ? undefined : "exit"}
                       transition={smoothTransition}
                     >
-                      <Settings onBack={() => setCurrentView("main")} />
+                      <Settings />
                     </motion.div>
       ) : currentView === "mythic-plus" ? (
         <motion.div
           key="mythic-plus-view"
-          className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-md border border-white/10 bg-[var(--surface-0)] shadow-[var(--surface-glow)] overflow-hidden"
+          className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-md border border-white/10 bg-[var(--surface-1)] shadow-[var(--surface-glow)] overflow-hidden"
           variants={panelVariants}
           initial={reduceMotion ? false : "initial"}
           animate="animate"
           exit={reduceMotion ? undefined : "exit"}
           transition={smoothTransition}
         >
-          <GameModePage gameMode="mythic-plus" onBack={() => setCurrentView("main")} />
+          <GameModePage
+            key={`mythic-plus-page-${gameModeNavigationVersion}`}
+            gameMode="mythic-plus"
+          />
         </motion.div>
       ) : currentView === "raid" ? (
         <motion.div
           key="raid-view"
-          className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-md border border-white/10 bg-[var(--surface-0)] shadow-[var(--surface-glow)] overflow-hidden"
+          className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-md border border-white/10 bg-[var(--surface-1)] shadow-[var(--surface-glow)] overflow-hidden"
           variants={panelVariants}
           initial={reduceMotion ? false : "initial"}
           animate="animate"
           exit={reduceMotion ? undefined : "exit"}
           transition={smoothTransition}
         >
-          <GameModePage gameMode="raid" onBack={() => setCurrentView("main")} />
+          <GameModePage key={`raid-page-${gameModeNavigationVersion}`} gameMode="raid" />
         </motion.div>
       ) : currentView === "pvp" ? (
         <motion.div
           key="pvp-view"
-          className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-md border border-white/10 bg-[var(--surface-0)] shadow-[var(--surface-glow)] overflow-hidden"
+          className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-md border border-white/10 bg-[var(--surface-1)] shadow-[var(--surface-glow)] overflow-hidden"
           variants={panelVariants}
           initial={reduceMotion ? false : "initial"}
           animate="animate"
           exit={reduceMotion ? undefined : "exit"}
           transition={smoothTransition}
         >
-          <GameModePage gameMode="pvp" onBack={() => setCurrentView("main")} />
+          <GameModePage key={`pvp-page-${gameModeNavigationVersion}`} gameMode="pvp" />
         </motion.div>
       ) : (
         <CombatLogDebug />

@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   AppWindow,
-  ArrowLeft,
   CheckCircle2,
   HardDrive,
   Keyboard,
@@ -36,10 +35,6 @@ import { SettingsToggleField } from "./SettingsToggleField";
 import { shallowEqual } from "../../utils/comparison";
 import { formatBytes } from "../../utils/format";
 import { CaptureWindowInfo } from "../../types/recording";
-
-interface SettingsProps {
-  onBack: () => void;
-}
 
 const VIDEO_QUALITY_OPTIONS: SettingsSelectOption[] = Object.entries(QUALITY_SETTINGS).map(
   ([key, { label }]) => ({ value: key, label }),
@@ -96,7 +91,7 @@ function isMarkerHotkey(value: string): value is MarkerHotkey {
   return HOTKEY_OPTIONS.some((option) => option.value === value);
 }
 
-export function Settings({ onBack }: SettingsProps) {
+export function Settings() {
   const { settings, updateSettings } = useSettings();
   const { isRecording } = useRecording();
   const [formData, setFormData] = useState<RecordingSettings>(settings);
@@ -313,15 +308,6 @@ export function Settings({ onBack }: SettingsProps) {
 
       <div className="flex shrink-0 items-center gap-4 border-b border-white/10 bg-[var(--surface-1)] px-4 py-4 md:px-6">
         <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onBack}
-            className="h-9 w-9 p-0"
-            ariaLabel="Back to main view"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
           <div>
             <h1 className="inline-flex items-center gap-2 text-lg font-semibold text-neutral-100">
               <Settings2 className="h-4 w-4 text-neutral-300" />

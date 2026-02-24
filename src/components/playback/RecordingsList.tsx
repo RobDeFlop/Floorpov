@@ -7,20 +7,82 @@ import { useRecording } from '../../contexts/RecordingContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useVideo } from '../../contexts/VideoContext';
 import { panelVariants, smoothTransition } from '../../lib/motion';
+import { RecordingInfo } from '../../types/recording';
 import { formatBytes, formatDate } from '../../utils/format';
 import { useRecordingSelection } from './useRecordingSelection';
 
-interface RecordingInfo {
-  filename: string;
-  file_path: string;
-  size_bytes: number;
-  created_at: number;
-  zone_name?: string;
-  encounter_name?: string;
-  encounter_category?: string;
+interface RecordingsListProps {
+  gameModeContext?: "mythic-plus" | "raid" | "pvp";
+  title?: string;
+  description?: string;
+  activeRecordingPath?: string | null;
+  onRecordingActivate?: (recording: RecordingInfo) => void;
 }
 
-export function RecordingsList() {
+interface ModeDetails {
+  primaryLabel: string;
+  primaryValue: string;
+  secondaryLabel: string;
+  secondaryValue: string;
+}
+
+function extractMythicKeyLevel(recording: RecordingInfo): string | null {
+  const candidates = [recording.filename, recording.encounter_name, recording.zone_name].filter(
+    Boolean,
+  ) as string[];
+  const keyPattern = /(?:\+|\bkey\s*)(\d{1,2})\b/i;
+
+  for (const candidate of candidates) {
+    const match = candidate.match(keyPattern);
+    if (match?.[1]) {
+      return `+${match[1]}`;
+    }
+  }
+
+  return null;
+}
+
+function getModeDetails(
+  recording: RecordingInfo,
+  gameModeContext?: RecordingsListProps["gameModeContext"],
+): ModeDetails | null {
+  if (!gameModeContext) {
+    return null;
+  }
+
+  if (gameModeContext === "mythic-plus") {
+    return {
+      primaryLabel: "Dungeon",
+      primaryValue: recording.zone_name ?? "Unknown",
+      secondaryLabel: "Key",
+      secondaryValue: extractMythicKeyLevel(recording) ?? "Unknown",
+    };
+  }
+
+  if (gameModeContext === "raid") {
+    return {
+      primaryLabel: "Raid",
+      primaryValue: recording.zone_name ?? "Unknown",
+      secondaryLabel: "Encounter",
+      secondaryValue: recording.encounter_name ?? "Unknown",
+    };
+  }
+
+  return {
+    primaryLabel: "Map",
+    primaryValue: recording.zone_name ?? "Unknown",
+    secondaryLabel: "Encounter",
+    secondaryValue: recording.encounter_name ?? "Unknown",
+  };
+}
+
+export function RecordingsList({
+  gameModeContext,
+  title,
+  description,
+  activeRecordingPath,
+  onRecordingActivate,
+}: RecordingsListProps) {
   const { settings } = useSettings();
   const { loadVideo, videoSrc, isVideoLoading } = useVideo();
   const { isRecording, loadPlaybackMetadata } = useRecording();
@@ -45,6 +107,7 @@ export function RecordingsList() {
     isDeletingRecordings ||
     hasPendingDeleteRecordings ||
     isVideoLoading;
+  const filteredRecordings = recordings;
 
   const loadRecordings = useCallback(async () => {
     if (!settings.outputFolder) {
@@ -90,6 +153,7 @@ export function RecordingsList() {
         convertedSource: recordingSource,
       });
       loadVideo(recordingSource);
+      onRecordingActivate?.(recording);
     } catch (loadError) {
       console.error('Failed to load recording:', loadError);
       setError('Could not load the selected recording.');
@@ -103,6 +167,7 @@ export function RecordingsList() {
     loadPlaybackMetadata,
     loadVideo,
     loadingRecordingPath,
+    onRecordingActivate,
   ]);
 
   const {
@@ -117,7 +182,7 @@ export function RecordingsList() {
     handleSelectionControlMouseDown,
     updateSelectionAfterDelete,
   } = useRecordingSelection<RecordingInfo>({
-    recordings,
+    recordings: filteredRecordings,
     isActionLocked,
     onPlainActivate: handleLoadRecording,
   });
@@ -293,10 +358,15 @@ export function RecordingsList() {
       transition={smoothTransition}
     >
       <div className="mb-2.5 flex items-center justify-between pr-2">
-        <h2 className="inline-flex items-center gap-2 text-sm font-medium text-neutral-100">
-          <Film className="h-4 w-4 text-neutral-300" />
-          Recordings
-        </h2>
+        <div>
+          <h2 className="inline-flex items-center gap-2 text-sm font-medium text-neutral-100">
+            <Film className="h-4 w-4 text-neutral-300" />
+            {title ?? 'Recordings'}
+          </h2>
+          {description && (
+            <p className="mt-1 text-xs text-neutral-400">{description}</p>
+          )}
+        </div>
       </div>
 
       {error && <p className="mb-2 text-xs text-red-300" role="status">{error}</p>}
@@ -307,8 +377,10 @@ export function RecordingsList() {
       >
         {!settings.outputFolder ? (
           <p className="text-xs text-neutral-400">Select an output folder to browse recordings.</p>
-        ) : recordings.length === 0 && !isLoading ? (
-          <p className="text-xs text-neutral-400">No recordings found in {settings.outputFolder}</p>
+        ) : filteredRecordings.length === 0 && !isLoading ? (
+          <p className="text-xs text-neutral-400">
+            {`No recordings found in ${settings.outputFolder}`}
+          </p>
         ) : (
           <>
             <div className="mb-1 flex items-center justify-between gap-2 border-b border-white/10 pb-1.5">
@@ -316,16 +388,16 @@ export function RecordingsList() {
                 <label className="ml-2 inline-flex h-6 w-6 items-center justify-center">
                   <input
                     type="checkbox"
-                    checked={selectedRecordingCount > 0 && selectedRecordingCount === recordings.length}
+                    checked={selectedRecordingCount > 0 && selectedRecordingCount === filteredRecordings.length}
                     ref={(el) => {
                       if (el) {
-                        el.indeterminate = selectedRecordingCount > 0 && selectedRecordingCount < recordings.length;
+                        el.indeterminate = selectedRecordingCount > 0 && selectedRecordingCount < filteredRecordings.length;
                       }
                     }}
-                    onChange={selectedRecordingCount === recordings.length ? clearSelection : selectAll}
-                    disabled={isActionLocked || recordings.length === 0}
+                    onChange={selectedRecordingCount === filteredRecordings.length ? clearSelection : selectAll}
+                    disabled={isActionLocked || filteredRecordings.length === 0}
                      className="h-3.5 w-3.5 rounded-sm border-white/30 bg-black/30 accent-emerald-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 disabled:cursor-not-allowed disabled:opacity-50"
-                    aria-label={selectedRecordingCount === recordings.length ? "Deselect all recordings" : "Select all recordings"}
+                    aria-label={selectedRecordingCount === filteredRecordings.length ? "Deselect all recordings" : "Select all recordings"}
                   />
                 </label>
                 <span className="text-[11px] text-neutral-400">
@@ -373,19 +445,21 @@ export function RecordingsList() {
             </div>
             
             <ul className="space-y-1" role="list">
-            {recordings.map((recording) => {
+            {filteredRecordings.map((recording) => {
               const recordingSource = convertFileSrc(recording.file_path);
               const isLoadedRecording = videoSrc === recordingSource;
               const isSelectedRecording = selectedRecordingPathSet.has(recording.file_path);
+              const isActiveRecording = activeRecordingPath === recording.file_path;
+              const modeDetails = getModeDetails(recording, gameModeContext);
 
               return (
                 <motion.li
                   key={`${recording.filename}-${recording.created_at}`}
                   className={`grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1 rounded-sm border text-left transition-colors hover:bg-white/5 ${
-                    isLoadedRecording
-                      ? 'border-emerald-300/40 bg-emerald-500/12 hover:border-emerald-300/50'
+                    isLoadedRecording || isActiveRecording
+                      ? 'border-emerald-300/45 bg-emerald-500/16 hover:border-emerald-300/55'
                       : isSelectedRecording
-                         ? 'border-emerald-300/35 bg-emerald-500/10 hover:border-emerald-300/45'
+                          ? 'border-emerald-300/35 bg-emerald-500/10 hover:border-emerald-300/45'
                       : 'border-white/10 bg-black/20 hover:border-white/25'
                   }`}
                   initial={reduceMotion ? false : { opacity: 0, y: 4 }}
@@ -409,7 +483,7 @@ export function RecordingsList() {
                     onMouseDown={(event) => handleRecordingRowMouseDown(event, recording)}
                     onClick={(event) => handleRecordingRowClick(event, recording)}
                     disabled={isActionLocked}
-                    aria-current={isLoadedRecording ? 'true' : undefined}
+                    aria-current={isLoadedRecording || isActiveRecording ? 'true' : undefined}
                     className="min-w-0 flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <span className="min-w-0 flex items-center gap-2">
@@ -418,6 +492,14 @@ export function RecordingsList() {
                         <span className="block truncate text-xs text-neutral-200" title={recording.filename}>
                           {recording.filename}
                         </span>
+                        {modeDetails && (
+                          <span className="mt-0.5 block truncate text-[11px] text-neutral-400">
+                            <span className="text-neutral-500">{modeDetails.primaryLabel}:</span>{' '}
+                            {modeDetails.primaryValue}
+                            <span className="text-neutral-500">{' '}· {modeDetails.secondaryLabel}:</span>{' '}
+                            {modeDetails.secondaryValue}
+                          </span>
+                        )}
                         <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-neutral-400 sm:hidden">
                           <Clock3 className="h-3 w-3" />
                           {`${formatBytes(recording.size_bytes)} · ${formatDate(recording.created_at)}`}

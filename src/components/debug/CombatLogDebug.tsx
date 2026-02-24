@@ -338,12 +338,12 @@ export function CombatLogDebug() {
       animate="animate"
       transition={smoothTransition}
     >
-      <div className="shrink-0 border-b border-white/10 bg-[var(--surface-1)] px-5 py-4">
-        <h1 className="inline-flex items-center gap-2 text-base font-semibold text-neutral-200">
+      <div className="shrink-0 border-b border-white/10 bg-[var(--surface-1)] px-4 py-4 md:px-6">
+        <h1 className="inline-flex items-center gap-2 text-lg font-semibold text-neutral-100">
           <Bug className="h-4 w-4 text-amber-400" />
           Combat Log Debug
         </h1>
-        <p className="mt-1 text-xs text-neutral-500">
+        <p className="mt-1 text-xs text-neutral-400">
           Select a combat log file, parse important happenings, and inspect extracted events.
         </p>
       </div>
