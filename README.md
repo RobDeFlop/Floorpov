@@ -3,7 +3,7 @@
 > **WoW Gameplay Recording with Automatic Event Markers**
 
 [![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/RobDeFlop/FloorPoV)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPLv3-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)]()
 
 FloorPoV is a desktop application that records your World of Warcraft gameplay while automatically detecting and marking important events like player deaths, boss encounters, kills, and interrupts directly on the video timeline. Perfect for analyzing Mythic+ runs, raid progression, and PvP matches.
@@ -110,4 +110,4 @@ Contributions are welcome! Please check the [issues page](https://github.com/Rob
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+GNU General Public License v3.0 - see [LICENSE](LICENSE) file for details.
