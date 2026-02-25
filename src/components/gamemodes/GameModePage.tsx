@@ -2,23 +2,24 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   Clapperboard,
   FileSearch,
+  FileText,
   LoaderCircle,
   Shield,
   Sword,
   Trophy,
 } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
-import { GameEvents } from "../events/GameEvents";
-import { GameModeRecordingsBrowser } from "./GameModeRecordingsBrowser";
-import { VideoPlayer } from "../playback/VideoPlayer";
-import { TabControls, type TabControlItem } from "../ui/TabControls";
 import { RecordingMetadata } from "../../types/events";
 import { RecordingInfo } from "../../types/recording";
 import { formatBytes, formatDate, formatTime } from "../../utils/format";
 import { getRecordingDisplayTitle } from "../../utils/recording-title";
+import { GameEvents } from "../events/GameEvents";
+import { VideoPlayer } from "../playback/VideoPlayer";
+import { TabControls, type TabControlItem } from "../ui/TabControls";
+import { GameModeRecordingsBrowser } from "./GameModeRecordingsBrowser";
 
 type GameMode = "mythic-plus" | "raid" | "pvp";
-type AnalysisTab = "video-analysis" | "log-analysis";
+type AnalysisTab = "video-analysis" | "log-analysis" | "metadata";
 
 const ANALYSIS_TAB_ITEMS: TabControlItem<AnalysisTab>[] = [
   {
@@ -30,6 +31,11 @@ const ANALYSIS_TAB_ITEMS: TabControlItem<AnalysisTab>[] = [
     value: "log-analysis",
     label: "Log Analysis",
     icon: FileSearch,
+  },
+  {
+    value: "metadata",
+    label: "Metadata",
+    icon: FileText,
   },
 ];
 
@@ -208,7 +214,7 @@ export function GameModePage({ gameMode }: GameModePageProps) {
             ariaLabel="Recording analysis tabs"
             idBase={ANALYSIS_TABS_ID_BASE}
           />
-          <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-hidden">
             {activeTab === "video-analysis" ? (
               <div
                 id={`${ANALYSIS_TABS_ID_BASE}-video-analysis-panel`}
@@ -221,11 +227,11 @@ export function GameModePage({ gameMode }: GameModePageProps) {
                 </main>
                 <GameEvents />
               </div>
-            ) : (
+            ) : activeTab === "metadata" ? (
               <div
-                id={`${ANALYSIS_TABS_ID_BASE}-log-analysis-panel`}
+                id={`${ANALYSIS_TABS_ID_BASE}-metadata-panel`}
                 role="tabpanel"
-                aria-labelledby={`${ANALYSIS_TABS_ID_BASE}-log-analysis-tab`}
+                aria-labelledby={`${ANALYSIS_TABS_ID_BASE}-metadata-tab`}
                 className="h-full overflow-y-auto px-4 py-3"
               >
                 <section className="rounded-sm border border-white/10 bg-(--surface-1)/80 p-3">
@@ -263,7 +269,14 @@ export function GameModePage({ gameMode }: GameModePageProps) {
                     )}
                   </div>
                 </section>
-
+              </div>
+            ) : (
+              <div
+                id={`${ANALYSIS_TABS_ID_BASE}-log-analysis-panel`}
+                role="tabpanel"
+                aria-labelledby={`${ANALYSIS_TABS_ID_BASE}-log-analysis-tab`}
+                className="h-full overflow-y-auto px-4 py-3"
+              >
                 {isMetadataLoading ? (
                   <div className="mt-3 inline-flex items-center gap-2 rounded-sm border border-white/10 bg-(--surface-1)/70 px-3 py-2 text-xs text-neutral-300">
                     <LoaderCircle className="h-3.5 w-3.5 animate-spin" />

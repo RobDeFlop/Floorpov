@@ -18,11 +18,6 @@ interface GameModeRecordingsBrowserProps {
   onRecordingActivate: (recording: RecordingInfo) => void;
 }
 
-interface ModeField {
-  label: string;
-  value: string;
-}
-
 interface ModeOverviewCopy {
   zoneLabel: string;
   encounterLabel: string;
@@ -80,45 +75,6 @@ function toSearchText(recording: RecordingInfo): string {
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
-}
-
-function getModeFields(recording: RecordingInfo, gameMode: GameMode): ModeField[] {
-  if (gameMode === "mythic-plus") {
-    return [
-      {
-        label: "Dungeon",
-        value: recording.zone_name ?? "Unknown",
-      },
-      {
-        label: "Key",
-        value: typeof recording.key_level === "number" ? `+${recording.key_level}` : "Unknown",
-      },
-    ];
-  }
-
-  if (gameMode === "raid") {
-    return [
-      {
-        label: "Raid",
-        value: recording.zone_name ?? "Unknown",
-      },
-      {
-        label: "Encounter",
-        value: recording.encounter_name ?? "Unknown",
-      },
-    ];
-  }
-
-  return [
-    {
-      label: "Map",
-      value: recording.zone_name ?? "Unknown",
-    },
-    {
-      label: "Match",
-      value: recording.encounter_name ?? "Unknown",
-    },
-  ];
 }
 
 export function GameModeRecordingsBrowser({
@@ -364,7 +320,6 @@ export function GameModeRecordingsBrowser({
       ) : (
         <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
           {filteredRecordings.map((recording) => {
-            const modeFields = getModeFields(recording, gameMode);
             const isActivating = activatingRecordingPath === recording.file_path;
             const displayTitle = getRecordingDisplayTitle(recording, gameMode);
 
@@ -389,20 +344,6 @@ export function GameModeRecordingsBrowser({
                       </p>
                     </div>
                     {isActivating && <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-emerald-200" />}
-                  </div>
-
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                    {modeFields.map((field) => (
-                      <div
-                        key={`${recording.file_path}-${field.label}`}
-                        className="rounded-sm border border-white/10 bg-black/20 px-2 py-1.5"
-                      >
-                        <p className="text-[10px] uppercase tracking-[0.09em] text-neutral-500">{field.label}</p>
-                        <p className="mt-0.5 truncate text-neutral-200" title={field.value}>
-                          {field.value}
-                        </p>
-                      </div>
-                    ))}
                   </div>
                 </button>
               </li>

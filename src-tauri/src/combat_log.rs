@@ -99,7 +99,7 @@ pub async fn start_combat_watch(
         {
             begin_watch_recording_session(watch_state, output_path);
         }
-        emit_combat_watch_status(&app_handle, "info", "Combat watch already armed", None);
+        emit_combat_watch_status(&app_handle, "info", "Combatlog watcher active!", None);
         return Ok(());
     }
 
@@ -172,7 +172,7 @@ pub async fn start_combat_watch(
         }
     }
 
-    emit_combat_watch_status(&app_handle, "info", "Combat watch armed", Some(&log_path));
+    emit_combat_watch_status(&app_handle, "info", "Combatlog watcher active!", Some(&log_path));
 
     Ok(())
 }
@@ -196,7 +196,7 @@ pub async fn stop_combat_watch(app_handle: AppHandle) -> Result<(), String> {
         persist_watch_metadata_if_configured(&watch_state);
     }
 
-    emit_combat_watch_status(&app_handle, "info", "Combat watch stopped", None);
+    emit_combat_watch_status(&app_handle, "info", "Combatlog watcher stopped", None);
 
     Ok(())
 }

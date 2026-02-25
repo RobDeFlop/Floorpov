@@ -154,11 +154,6 @@ export function RecordingsList({
       await loadPlaybackMetadata(recording.file_path);
 
       const recordingSource = convertFileSrc(recording.file_path);
-      console.log('[RecordingsList] Loading recording', {
-        filename: recording.filename,
-        originalPath: recording.file_path,
-        convertedSource: recordingSource,
-      });
       loadVideo(recordingSource);
       onRecordingActivate?.(recording);
     } catch (loadError) {

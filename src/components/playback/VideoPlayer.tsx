@@ -12,8 +12,6 @@ import {
 } from "lucide-react";
 import { useVideo } from "../../contexts/VideoContext";
 import { useRecording } from "../../contexts/RecordingContext";
-import { useMarker } from "../../contexts/MarkerContext";
-import { EventMarker } from "../events/EventMarker";
 import { ControlIconButton } from "./ControlIconButton";
 import { formatTime } from "../../utils/format";
 
@@ -39,7 +37,6 @@ export function VideoPlayer() {
     syncIsPlaying,
     setVideoLoading,
   } = useVideo();
-  const { events } = useMarker();
 
   const { isRecording, recordingWarning } = useRecording();
 
@@ -143,11 +140,9 @@ export function VideoPlayer() {
             preload="metadata"
             onLoadStart={() => {
               setVideoLoading(true);
-              console.log("[VideoPlayer] Video load started", { src: videoSrc });
             }}
             onCanPlay={() => {
               setVideoLoading(false);
-              console.log("[VideoPlayer] Video can play");
             }}
             onError={(event) => {
               setVideoLoading(false);
@@ -300,24 +295,6 @@ export function VideoPlayer() {
                   className="pointer-events-none absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-emerald-100 opacity-0 transition-opacity group-hover:opacity-100"
                   style={{ left: `calc(${progress}% - 6px)` }}
                 />
-                {events.map((event) => {
-                  const position = duration > 0 ? (event.timestamp / duration) * 100 : 0;
-                  return (
-                    <button
-                      key={event.id}
-                      type="button"
-                      className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-sm p-0.5 text-neutral-200 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45"
-                      style={{ left: `${position}%` }}
-                      onClick={(eventClick) => {
-                        eventClick.stopPropagation();
-                        seek(event.timestamp);
-                      }}
-                      aria-label={`Seek to marker at ${formatTime(event.timestamp)}`}
-                    >
-                      <EventMarker type={event.type} />
-                    </button>
-                  );
-                })}
               </div>
 
               <div className="flex items-center gap-2 md:shrink-0">
