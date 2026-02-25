@@ -1,6 +1,6 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Clock3, Film, LoaderCircle, RefreshCw } from "lucide-react";
+import { AlertTriangle, Clock3, Film, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRecording } from "../../contexts/RecordingContext";
 import { useSettings } from "../../contexts/SettingsContext";
@@ -92,6 +92,8 @@ export function GameModeRecordingsBrowser({
   const [selectedZone, setSelectedZone] = useState<string>("all");
   const [selectedEncounter, setSelectedEncounter] = useState<string>("all");
   const [selectedDateRange, setSelectedDateRange] = useState<DateRangeFilter>("all");
+  const [pendingDeleteRecording, setPendingDeleteRecording] = useState<RecordingInfo | null>(null);
+  const [isDeletingRecording, setIsDeletingRecording] = useState(false);
 
   const copy = modeOverviewCopy[gameMode];
   const isActionLocked = isRecording || isVideoLoading || Boolean(activatingRecordingPath);
@@ -220,6 +222,46 @@ export function GameModeRecordingsBrowser({
     [isActionLocked, loadPlaybackMetadata, loadVideo, onRecordingActivate],
   );
 
+  const handleDeleteRecording = useCallback(
+    async (recording: RecordingInfo) => {
+      if (isActionLocked || isDeletingRecording) {
+        return;
+      }
+
+      setPendingDeleteRecording(recording);
+    },
+    [isActionLocked, isDeletingRecording],
+  );
+
+  const confirmDeleteRecording = useCallback(async () => {
+    const recordingToDelete = pendingDeleteRecording;
+    if (!recordingToDelete || isDeletingRecording) {
+      return;
+    }
+
+    setIsDeletingRecording(true);
+    setError(null);
+
+    try {
+      await invoke("delete_recording", { filePath: recordingToDelete.file_path });
+      setRecordings((prev) => prev.filter((r) => r.file_path !== recordingToDelete.file_path));
+      setPendingDeleteRecording(null);
+    } catch (deleteError) {
+      console.error("Failed to delete recording:", deleteError);
+      setError("Could not delete the recording.");
+    } finally {
+      setIsDeletingRecording(false);
+    }
+  }, [pendingDeleteRecording, isDeletingRecording]);
+
+  const cancelDeleteRecording = useCallback(() => {
+    if (isDeletingRecording) {
+      return;
+    }
+
+    setPendingDeleteRecording(null);
+  }, [isDeletingRecording]);
+
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-(--surface-1) px-4 py-3">
       {error && <p className="mb-2 text-xs text-rose-200">{error}</p>}
@@ -343,13 +385,67 @@ export function GameModeRecordingsBrowser({
                         {`${formatDate(recording.created_at)} · ${formatBytes(recording.size_bytes)}`}
                       </p>
                     </div>
-                    {isActivating && <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-emerald-200" />}
+                    <div className="flex shrink-0 items-center gap-2">
+                      {isActivating && <LoaderCircle className="h-4 w-4 animate-spin text-emerald-200" />}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleDeleteRecording(recording);
+                        }}
+                        disabled={isActionLocked || isDeletingRecording}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-sm border border-white/10 bg-black/20 text-neutral-400 transition-colors hover:border-rose-300/35 hover:bg-rose-500/15 hover:text-rose-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/60 disabled:cursor-not-allowed disabled:opacity-50"
+                        title="Delete recording"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </button>
               </li>
             );
           })}
         </ul>
+      )}
+
+      {pendingDeleteRecording && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-sm border border-white/15 bg-(--surface-2) p-4 shadow-(--surface-glow)">
+            <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-sm border border-rose-300/25 bg-rose-500/12">
+              <AlertTriangle className="h-4 w-4 text-rose-200" />
+            </div>
+            <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-neutral-100">
+              Delete recording?
+            </h3>
+            <p className="mt-2 text-sm text-neutral-300">
+              This will permanently delete{" "}
+              <span className="font-medium text-neutral-100">
+                {getRecordingDisplayTitle(pendingDeleteRecording, gameMode)}
+              </span>
+              . This action cannot be undone.
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={cancelDeleteRecording}
+                disabled={isDeletingRecording}
+                className="inline-flex h-8 items-center rounded-sm border border-white/20 bg-black/20 px-3 text-xs text-neutral-200 transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void confirmDeleteRecording();
+                }}
+                disabled={isDeletingRecording}
+                className="inline-flex h-8 items-center rounded-sm border border-rose-300/35 bg-rose-500/14 px-3 text-xs font-semibold text-rose-100 transition-colors hover:bg-rose-500/22 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/60 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isDeletingRecording ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );
