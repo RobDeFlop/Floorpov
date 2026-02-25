@@ -11,12 +11,12 @@ interface EventMarkerProps {
 
 const VARIANT_CLASS_NAMES: Record<EventMarkerVariant, string> = {
   compact: "h-4 w-4",
-  detailed: "h-5 w-5",
+  detailed: "h-7 w-7",
 };
 
 const ICON_CLASS_NAMES: Record<EventMarkerVariant, string> = {
   compact: "h-2.5 w-2.5",
-  detailed: "h-3 w-3",
+  detailed: "h-4.5 w-4.5",
 };
 
 const ICONS: Record<GameEvent["type"], React.ComponentType<{ className?: string }>> = {

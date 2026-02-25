@@ -127,7 +127,7 @@ export function Layout() {
                   {currentView === "main" ? (
                     <motion.div
                       key="main-view"
-                      className={`flex-1 flex flex-col min-w-0 rounded-md border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden ${isResizingMedia ? "select-none" : ""}`}
+                      className={`flex-1 flex flex-col min-w-0 rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden ${isResizingMedia ? "select-none" : ""}`}
                       variants={panelVariants}
                       initial={reduceMotion ? false : "initial"}
                       animate="animate"
@@ -175,7 +175,7 @@ export function Layout() {
                   ) : currentView === "settings" ? (
                     <motion.div
                       key="settings-view"
-                      className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-md border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
+                      className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
                       variants={panelVariants}
                       initial={reduceMotion ? false : "initial"}
                       animate="animate"
@@ -187,7 +187,7 @@ export function Layout() {
       ) : currentView === "mythic-plus" ? (
         <motion.div
           key="mythic-plus-view"
-          className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-md border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
+          className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
           variants={panelVariants}
           initial={reduceMotion ? false : "initial"}
           animate="animate"
@@ -202,7 +202,7 @@ export function Layout() {
       ) : currentView === "raid" ? (
         <motion.div
           key="raid-view"
-          className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-md border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
+          className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
           variants={panelVariants}
           initial={reduceMotion ? false : "initial"}
           animate="animate"
@@ -214,7 +214,7 @@ export function Layout() {
       ) : currentView === "pvp" ? (
         <motion.div
           key="pvp-view"
-          className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-md border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
+          className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
           variants={panelVariants}
           initial={reduceMotion ? false : "initial"}
           animate="animate"

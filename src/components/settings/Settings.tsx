@@ -70,7 +70,7 @@ const FIELD_IDS = {
 };
 
 const NUMBER_FIELD_CLASS_NAME =
-  "w-full rounded-md border border-white/20 bg-black/20 px-3 py-2 text-sm text-neutral-100 transition-colors placeholder:text-neutral-400 focus:border-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-black/10 disabled:text-neutral-500";
+  "w-full rounded-sm border border-white/20 bg-black/20 px-3 py-2 text-sm text-neutral-100 transition-colors placeholder:text-neutral-400 focus:border-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-black/10 disabled:text-neutral-500";
 
 function formatCaptureWindowLabel(title: string, processName: string | null): string {
   return processName && processName.trim().length > 0 ? `${title} (${processName})` : title;

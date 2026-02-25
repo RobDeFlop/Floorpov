@@ -26,10 +26,10 @@ export function EventTooltip({ event, x }: EventTooltipProps) {
 
   return (
     <motion.div
-      className="absolute bottom-full mb-2 px-2 py-1 bg-neutral-900 border border-neutral-700 text-neutral-200 text-xs rounded whitespace-nowrap pointer-events-none z-10"
+      className="absolute bottom-full mb-2 px-2 py-1 bg-neutral-900 border border-neutral-700 text-neutral-200 text-xs rounded whitespace-nowrap pointer-events-none z-10 -translate-x-1/2"
       style={{ left: x }}
       initial={reduceMotion ? false : { opacity: 0, y: 4, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
+      animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
       exit={reduceMotion ? undefined : { opacity: 0, y: 4, scale: 0.98 }}
       transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
     >
