@@ -2,9 +2,9 @@ use std::sync::Mutex;
 use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-lazy_static::lazy_static! {
-    static ref CURRENT_HOTKEY: Mutex<Option<String>> = Mutex::new(None);
-}
+use std::sync::LazyLock;
+
+static CURRENT_HOTKEY: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
 
 #[tauri::command]
 pub async fn register_marker_hotkey(app_handle: AppHandle, hotkey: String) -> Result<(), String> {
@@ -15,7 +15,9 @@ pub async fn register_marker_hotkey(app_handle: AppHandle, hotkey: String) -> Re
     let mut current = CURRENT_HOTKEY.lock().map_err(|e| e.to_string())?;
 
     if let Some(old_hotkey) = current.as_ref() {
-        let _ = app_handle.global_shortcut().unregister(old_hotkey.as_str());
+        if let Err(e) = app_handle.global_shortcut().unregister(old_hotkey.as_str()) {
+            tracing::warn!("Failed to unregister old hotkey '{}': {}", old_hotkey, e);
+        }
     }
 
     let app_handle_clone = app_handle.clone();

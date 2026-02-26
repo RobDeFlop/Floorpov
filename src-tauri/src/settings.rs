@@ -210,7 +210,10 @@ fn read_recordings_list(folder_path: &str) -> Result<Vec<RecordingInfo>, String>
                 };
 
             recordings.push(RecordingInfo {
-                filename: path.file_name().unwrap().to_string_lossy().to_string(),
+                filename: path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "unknown".to_string()),
                 file_path: path.to_string_lossy().to_string(),
                 size_bytes: metadata.len(),
                 created_at,

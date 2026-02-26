@@ -229,6 +229,25 @@ pub(crate) fn finalize_segmented_recording(
         return Err("No recording segments were produced".to_string());
     }
 
+    // Fast path: try concat with all non-empty segments first.
+    // Only run decodability probing if this fails.
+    if finalize_with_exact_segments(
+        ffmpeg_binary_path,
+        segment_workspace,
+        &non_empty_paths,
+        &non_empty_durations,
+        output_path,
+    )
+    .is_ok()
+    {
+        return Ok(());
+    }
+
+    tracing::warn!(
+        "FFmpeg concat failed for full segment set. Probing segment decodability and trying recovery strategies"
+    );
+
+    // Slow path: probe each segment for decodability, then run recovery
     let (valid_paths, valid_durations) =
         collect_decodable_segments(ffmpeg_binary_path, &non_empty_paths, &non_empty_durations);
 
@@ -236,67 +255,30 @@ pub(crate) fn finalize_segmented_recording(
         return Err("No valid recording segments were produced".to_string());
     }
 
-    if let Err(initial_error) = finalize_with_exact_segments(
-        ffmpeg_binary_path,
-        segment_workspace,
-        &valid_paths,
-        &valid_durations,
-        output_path,
-    ) {
-        tracing::warn!(
-            error = %initial_error,
-            "FFmpeg concat failed for full segment set. Trying middle-drop and edge recovery strategies"
-        );
+    let mut last_error = String::new();
 
-        let mut last_error = initial_error;
-
-        if valid_paths.len() > 2 {
-            for remove_index in 1..(valid_paths.len() - 1) {
-                let mut candidate_paths = valid_paths.clone();
-                let mut candidate_durations = valid_durations.clone();
-                let removed_segment = candidate_paths.remove(remove_index);
-                if remove_index < candidate_durations.len() {
-                    candidate_durations.remove(remove_index);
-                }
-
-                match finalize_with_exact_segments(
-                    ffmpeg_binary_path,
-                    segment_workspace,
-                    &candidate_paths,
-                    &candidate_durations,
-                    output_path,
-                ) {
-                    Ok(()) => {
-                        tracing::warn!(
-                            remove_index,
-                            removed_segment = %removed_segment.display(),
-                            total_segments = valid_paths.len(),
-                            "Recovered recording by dropping one invalid middle segment"
-                        );
-                        return Ok(());
-                    }
-                    Err(error) => {
-                        last_error = error;
-                    }
-                }
+    if valid_paths.len() > 2 {
+        for remove_index in 1..(valid_paths.len() - 1) {
+            let mut candidate_paths = valid_paths.clone();
+            let mut candidate_durations = valid_durations.clone();
+            let removed_segment = candidate_paths.remove(remove_index);
+            if remove_index < candidate_durations.len() {
+                candidate_durations.remove(remove_index);
             }
-        }
 
-        for prefix_len in (1..valid_paths.len()).rev() {
-            let prefix_paths = &valid_paths[..prefix_len];
-            let prefix_durations = &valid_durations[..prefix_len.min(valid_durations.len())];
             match finalize_with_exact_segments(
                 ffmpeg_binary_path,
                 segment_workspace,
-                prefix_paths,
-                prefix_durations,
+                &candidate_paths,
+                &candidate_durations,
                 output_path,
             ) {
                 Ok(()) => {
                     tracing::warn!(
-                        prefix_len,
+                        remove_index,
+                        removed_segment = %removed_segment.display(),
                         total_segments = valid_paths.len(),
-                        "Recovered recording by concatenating the longest valid prefix"
+                        "Recovered recording by dropping one invalid middle segment"
                     );
                     return Ok(());
                 }
@@ -305,42 +287,64 @@ pub(crate) fn finalize_segmented_recording(
                 }
             }
         }
-
-        for suffix_start in 1..valid_paths.len() {
-            let suffix_paths = &valid_paths[suffix_start..];
-            let suffix_durations = if suffix_start < valid_durations.len() {
-                &valid_durations[suffix_start..]
-            } else {
-                &[]
-            };
-            match finalize_with_exact_segments(
-                ffmpeg_binary_path,
-                segment_workspace,
-                suffix_paths,
-                suffix_durations,
-                output_path,
-            ) {
-                Ok(()) => {
-                    tracing::warn!(
-                        suffix_start,
-                        suffix_len = suffix_paths.len(),
-                        total_segments = valid_paths.len(),
-                        "Recovered recording by concatenating a valid suffix"
-                    );
-                    return Ok(());
-                }
-                Err(error) => {
-                    last_error = error;
-                }
-            }
-        }
-
-        return Err(format!(
-            "Failed to finalize recording after trying full/middle-drop/prefix/suffix concat strategies. Last error: {last_error}"
-        ));
     }
 
-    Ok(())
+    for prefix_len in (1..valid_paths.len()).rev() {
+        let prefix_paths = &valid_paths[..prefix_len];
+        let prefix_durations = &valid_durations[..prefix_len.min(valid_durations.len())];
+        match finalize_with_exact_segments(
+            ffmpeg_binary_path,
+            segment_workspace,
+            prefix_paths,
+            prefix_durations,
+            output_path,
+        ) {
+            Ok(()) => {
+                tracing::warn!(
+                    prefix_len,
+                    total_segments = valid_paths.len(),
+                    "Recovered recording by concatenating the longest valid prefix"
+                );
+                return Ok(());
+            }
+            Err(error) => {
+                last_error = error;
+            }
+        }
+    }
+
+    for suffix_start in 1..valid_paths.len() {
+        let suffix_paths = &valid_paths[suffix_start..];
+        let suffix_durations = if suffix_start < valid_durations.len() {
+            &valid_durations[suffix_start..]
+        } else {
+            &[]
+        };
+        match finalize_with_exact_segments(
+            ffmpeg_binary_path,
+            segment_workspace,
+            suffix_paths,
+            suffix_durations,
+            output_path,
+        ) {
+            Ok(()) => {
+                tracing::warn!(
+                    suffix_start,
+                    suffix_len = suffix_paths.len(),
+                    total_segments = valid_paths.len(),
+                    "Recovered recording by concatenating a valid suffix"
+                );
+                return Ok(());
+            }
+            Err(error) => {
+                last_error = error;
+            }
+        }
+    }
+
+    Err(format!(
+        "Failed to finalize recording after trying full/middle-drop/prefix/suffix concat strategies. Last error: {last_error}"
+    ))
 }
 
 pub(crate) fn cleanup_segment_workspace(segment_workspace: &Path) {

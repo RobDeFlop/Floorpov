@@ -13,6 +13,7 @@ import {
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
 import { useRecording } from "../../contexts/RecordingContext";
+import { formatTime } from "../../utils/format";
 import { SidebarDividerBlock } from "./sidebar/SidebarDividerBlock";
 import { SidebarNavButton } from "./sidebar/SidebarNavButton";
 import { SidebarSectionLabel } from "./sidebar/SidebarSectionLabel";
@@ -65,12 +66,6 @@ export function Sidebar({ onNavigate, currentView, isDebugMode }: SidebarProps) 
     }
   };
 
-  const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
-
   const getRecordingIcon = () => {
     const iconClass = recordingAction 
       ? "text-amber-300" 
@@ -108,7 +103,7 @@ export function Sidebar({ onNavigate, currentView, isDebugMode }: SidebarProps) 
     }
     
     if (isRecording) {
-      return `Stop recording (${formatDuration(recordingDuration)})`;
+      return `Stop recording (${formatTime(recordingDuration)})`;
     }
     
     return 'Start recording';
@@ -264,7 +259,7 @@ export function Sidebar({ onNavigate, currentView, isDebugMode }: SidebarProps) 
                       transition={{ duration: 0.2, ease: "easeOut" }}
                     >
                       <span>
-                        Recording <span className="font-mono">{formatDuration(recordingDuration)}</span>
+                        Recording <span className="font-mono">{formatTime(recordingDuration)}</span>
                       </span>
                     </motion.div>
                   ) : (

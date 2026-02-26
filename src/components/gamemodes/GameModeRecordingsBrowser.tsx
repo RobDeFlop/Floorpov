@@ -182,13 +182,8 @@ export function GameModeRecordingsBrowser({
       void loadRecordings();
     });
 
-    const unlistenRecordingFinalized = listen("recording-finalized", () => {
-      void loadRecordings();
-    });
-
     return () => {
       unlistenRecordingStopped.then((unsubscribe) => unsubscribe());
-      unlistenRecordingFinalized.then((unsubscribe) => unsubscribe());
     };
   }, [loadRecordings]);
 

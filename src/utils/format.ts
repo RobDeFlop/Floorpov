@@ -15,3 +15,24 @@ export function formatTime(seconds: number): string {
 export function formatDate(timestampSeconds: number): string {
   return new Date(timestampSeconds * 1000).toLocaleString();
 }
+
+export function getEventTypeLabel(eventType: string): string {
+  switch (eventType) {
+    case "PARTY_KILL":
+      return "Kill";
+    case "UNIT_DIED":
+      return "Death";
+    case "SPELL_INTERRUPT":
+      return "Interrupt";
+    case "SPELL_DISPEL":
+      return "Dispel";
+    case "MANUAL_MARKER":
+      return "Manual Marker";
+    case "ENCOUNTER_START":
+      return "Encounter Start";
+    case "ENCOUNTER_END":
+      return "Encounter End";
+    default:
+      return eventType;
+  }
+}

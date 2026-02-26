@@ -101,7 +101,7 @@ pub(crate) struct MonitorIndexSearchState {
 }
 
 pub(crate) const FFMPEG_RESOURCE_PATH: &str = "bin/ffmpeg.exe";
-pub(crate) const FFMPEG_STOP_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const FFMPEG_STOP_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const FFMPEG_MODE_SWITCH_TO_BLACK_TIMEOUT: Duration = Duration::from_secs(4);
 pub(crate) const FFMPEG_MODE_SWITCH_TO_WINDOW_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const SYSTEM_AUDIO_SAMPLE_RATE_HZ: usize = 48_000;

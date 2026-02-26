@@ -1313,12 +1313,13 @@ fn update_debug_context(context: &mut DebugParseContext, parsed_line: &ParsedLog
 }
 
 fn extract_challenge_mode_key_level(fields: &[String]) -> Option<u32> {
-    fields
-        .iter()
-        .find_map(|value| {
-            let trimmed = value.trim_matches('"');
-            trimmed.parse::<u32>().ok().filter(|&level| level > 0 && level <= 40)
-        })
+    fields.iter().find_map(|value| {
+        let trimmed = value.trim_matches('"');
+        trimmed
+            .parse::<u32>()
+            .ok()
+            .filter(|&level| level > 0 && level <= 40)
+    })
 }
 
 fn is_context_only_event(raw_event_type: &str) -> bool {
@@ -1679,7 +1680,8 @@ mod tests {
         let mut accumulator = RecordingMetadataAccumulator::default();
         accumulator.begin_recording_session(0.0);
 
-        let challenge_start_line = build_line("CHALLENGE_MODE_START", &["2451", "2662", "505", "14"]);
+        let challenge_start_line =
+            build_line("CHALLENGE_MODE_START", &["2451", "2662", "505", "14"]);
         accumulator.consume_combat_log_line(&challenge_start_line, 0.25);
 
         let party_kill_line = build_party_kill_line(1);

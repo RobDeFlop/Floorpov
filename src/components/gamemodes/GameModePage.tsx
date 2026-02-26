@@ -12,7 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMarker } from "../../contexts/MarkerContext";
 import { RecordingMetadata } from "../../types/events";
 import { RecordingInfo } from "../../types/recording";
-import { formatBytes, formatDate, formatTime } from "../../utils/format";
+import { formatBytes, formatDate, formatTime, getEventTypeLabel } from "../../utils/format";
 import { getRecordingDisplayTitle } from "../../utils/recording-title";
 import { GameEvents } from "../events/GameEvents";
 import { VideoPlayer } from "../playback/VideoPlayer";
@@ -73,27 +73,6 @@ const gameModeConfig: Record<GameMode, GameModeConfigItem> = {
     icon: Trophy,
   },
 };
-
-function getEventTypeLabel(eventType: string): string {
-  switch (eventType) {
-    case "PARTY_KILL":
-      return "Kill";
-    case "UNIT_DIED":
-      return "Death";
-    case "SPELL_INTERRUPT":
-      return "Interrupt";
-    case "SPELL_DISPEL":
-      return "Dispel";
-    case "MANUAL_MARKER":
-      return "Manual Marker";
-    case "ENCOUNTER_START":
-      return "Encounter Start";
-    case "ENCOUNTER_END":
-      return "Encounter End";
-    default:
-      return eventType;
-  }
-}
 
 function formatEncounterCategory(category?: string): string {
   if (!category) {

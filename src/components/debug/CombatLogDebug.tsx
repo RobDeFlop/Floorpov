@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { ParseCombatLogDebugResult } from "../../types/events";
+import { formatBytes, getEventTypeLabel } from "../../utils/format";
 import { panelVariants, smoothTransition } from "../../lib/motion";
 
 interface EncounterTimelineSegment {
@@ -48,13 +49,6 @@ interface TimelineTooltipState {
 }
 
 const MAX_MARKERS_PER_SEGMENT = 120;
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
 
 function getEncounterCategoryLabel(category: EncounterTimelineSegment["category"]): string {
   switch (category) {
@@ -124,21 +118,6 @@ function getEventIconClassName(eventType: string): string {
       return "text-neutral-950";
     default:
       return "text-neutral-900";
-  }
-}
-
-function getEventTypeLabel(eventType: string): string {
-  switch (eventType) {
-    case "PARTY_KILL":
-      return "Kill";
-    case "UNIT_DIED":
-      return "Death";
-    case "SPELL_INTERRUPT":
-      return "Interrupt";
-    case "SPELL_DISPEL":
-      return "Dispel";
-    default:
-      return eventType;
   }
 }
 

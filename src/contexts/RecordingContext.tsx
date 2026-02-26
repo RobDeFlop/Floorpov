@@ -13,12 +13,7 @@ import {
   CombatWatchStatusEvent,
   RecordingMetadata,
 } from "../types/events";
-
-interface RecordingStartedPayload {
-  output_path: string;
-  width: number;
-  height: number;
-}
+import { RecordingStartedPayload, CleanupResult } from "../types/recording";
 
 interface RecordingCommandSettings {
   video_quality: string;
@@ -29,12 +24,6 @@ interface RecordingCommandSettings {
   capture_window_title: string;
   enable_system_audio: boolean;
   enable_recording_diagnostics: boolean;
-}
-
-interface CleanupResult {
-  deleted_count: number;
-  freed_bytes: number;
-  deleted_files: string[];
 }
 
 interface RecordingContextType {

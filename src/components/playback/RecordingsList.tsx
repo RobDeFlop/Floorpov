@@ -338,13 +338,8 @@ export function RecordingsList({
       loadRecordings();
     });
 
-    const unlistenRecordingFinalized = listen('recording-finalized', () => {
-      loadRecordings();
-    });
-
     return () => {
       unlistenRecordingStopped.then((unsubscribe) => unsubscribe());
-      unlistenRecordingFinalized.then((unsubscribe) => unsubscribe());
     };
   }, [loadRecordings]);
 

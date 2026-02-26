@@ -131,7 +131,9 @@ pub(crate) fn spawn_ffmpeg_recording_task(
                 if run_result.force_killed {
                     tracing::warn!(
                         segment_path = %segment_output_path.display(),
-                        "Skipping segment because FFmpeg was force-killed before clean finalization"
+                        wall_clock_secs = run_result.wall_clock_duration.as_secs_f32(),
+                        "FFmpeg was force-killed before clean finalization; segment discarded. \
+                         Consider increasing FFMPEG_STOP_TIMEOUT if this happens on normal stops."
                     );
                 } else {
                     segment_paths.push(segment_output_path);

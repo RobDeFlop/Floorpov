@@ -1,15 +1,10 @@
 import { GameEvent } from "../../types/events";
+import { formatTime } from "../../utils/format";
 import { motion, useReducedMotion } from 'motion/react';
 
 interface EventTooltipProps {
   event: GameEvent;
   x: number;
-}
-
-function formatTime(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
 export function EventTooltip({ event, x }: EventTooltipProps) {
