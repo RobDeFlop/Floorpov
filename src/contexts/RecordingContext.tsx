@@ -13,18 +13,7 @@ import {
   CombatWatchStatusEvent,
   RecordingMetadata,
 } from "../types/events";
-import { RecordingStartedPayload, CleanupResult } from "../types/recording";
-
-interface RecordingCommandSettings {
-  video_quality: string;
-  frame_rate: number;
-  bitrate: number;
-  capture_source: string;
-  capture_window_hwnd: string;
-  capture_window_title: string;
-  enable_system_audio: boolean;
-  enable_recording_diagnostics: boolean;
-}
+import { RecordingStartedPayload, CleanupResult, RecordingCommandSettings, RecordingOrigin, AutoTriggerMode } from "../types/recording";
 
 interface RecordingContextType {
   isRecording: boolean;
@@ -41,8 +30,6 @@ interface RecordingContextType {
   stopRecording: () => Promise<void>;
 }
 
-type RecordingOrigin = "manual" | "auto";
-type AutoTriggerMode = "mythicPlus" | "raid" | "pvp";
 const AUTO_STOP_GRACE_MS = 5000;
 
 const RecordingContext = createContext<RecordingContextType | undefined>(undefined);

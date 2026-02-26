@@ -1,6 +1,8 @@
 import { RecordingInfo } from "../types/recording";
+import { type GameMode } from "../types/ui";
 
-export type RecordingTitleMode = "mythic-plus" | "raid" | "pvp";
+/** Alias kept for backward compatibility; prefer `GameMode` from `types/ui`. */
+export type RecordingTitleMode = GameMode;
 
 function normalizeEncounterCategory(category?: string): string | null {
   if (!category) {

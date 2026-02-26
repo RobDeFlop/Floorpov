@@ -1,16 +1,18 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { AlertTriangle, Clock3, Film, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
+import { Clock3, Film, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRecording } from "../../contexts/RecordingContext";
 import { useSettings } from "../../contexts/SettingsContext";
 import { useVideo } from "../../contexts/VideoContext";
+import { useRecordingsList } from "../../hooks/useRecordingsList";
 import { RecordingInfo } from "../../types/recording";
+import { type GameMode } from "../../types/ui";
 import { formatBytes, formatDate } from "../../utils/format";
 import { getRecordingDisplayTitle, isRecordingInGameMode } from "../../utils/recording-title";
+import { DeleteConfirmDialog } from "../ui/DeleteConfirmDialog";
+import { Input } from "../ui/Input";
 import { SettingsSelect, type SettingsSelectOption } from "../settings/SettingsSelect";
 
-type GameMode = "mythic-plus" | "raid" | "pvp";
 type DateRangeFilter = "all" | "24h" | "7d" | "30d";
 
 interface GameModeRecordingsBrowserProps {
@@ -38,10 +40,6 @@ const modeOverviewCopy: Record<GameMode, ModeOverviewCopy> = {
   },
 };
 
-const filterControlClassName =
-  "w-full rounded-sm border border-white/20 bg-black/20 px-3 py-2 text-sm text-neutral-100 " +
-  "transition-colors placeholder:text-neutral-400 focus:border-emerald-300/45 focus-visible:outline-none " +
-  "focus-visible:ring-2 focus-visible:ring-emerald-300/60";
 
 function getDateThresholdUnixSeconds(dateRange: DateRangeFilter): number | null {
   const currentUnixSeconds = Math.floor(Date.now() / 1000);
@@ -84,9 +82,9 @@ export function GameModeRecordingsBrowser({
   const { settings } = useSettings();
   const { isRecording, loadPlaybackMetadata } = useRecording();
   const { loadVideo, isVideoLoading } = useVideo();
-  const [recordings, setRecordings] = useState<RecordingInfo[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { recordings, isLoading, error: listError, loadRecordings, setRecordings } = useRecordingsList();
+  const [actionError, setActionError] = useState<string | null>(null);
+  const displayError = actionError ?? listError;
   const [activatingRecordingPath, setActivatingRecordingPath] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedZone, setSelectedZone] = useState<string>("all");
@@ -151,42 +149,6 @@ export function GameModeRecordingsBrowser({
     });
   }, [modeRecordings, searchQuery, selectedDateRange, selectedEncounter, selectedZone]);
 
-  const loadRecordings = useCallback(async () => {
-    if (!settings.outputFolder) {
-      setRecordings([]);
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const result = await invoke<RecordingInfo[]>("get_recordings_list", {
-        folderPath: settings.outputFolder,
-      });
-      setRecordings(result);
-    } catch (loadError) {
-      console.error("Failed to load recordings:", loadError);
-      setError("Could not load recordings from the output folder.");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [settings.outputFolder]);
-
-  useEffect(() => {
-    void loadRecordings();
-  }, [loadRecordings]);
-
-  useEffect(() => {
-    const unlistenRecordingStopped = listen("recording-stopped", () => {
-      void loadRecordings();
-    });
-
-    return () => {
-      unlistenRecordingStopped.then((unsubscribe) => unsubscribe());
-    };
-  }, [loadRecordings]);
-
   useEffect(() => {
     setSearchQuery("");
     setSelectedZone("all");
@@ -201,7 +163,7 @@ export function GameModeRecordingsBrowser({
       }
 
       setActivatingRecordingPath(recording.file_path);
-      setError(null);
+      setActionError(null);
 
       try {
         await loadPlaybackMetadata(recording.file_path);
@@ -209,7 +171,7 @@ export function GameModeRecordingsBrowser({
         onRecordingActivate(recording);
       } catch (loadError) {
         console.error("Failed to activate recording:", loadError);
-        setError("Could not open the selected recording.");
+        setActionError("Could not open the selected recording.");
       } finally {
         setActivatingRecordingPath(null);
       }
@@ -235,19 +197,19 @@ export function GameModeRecordingsBrowser({
     }
 
     setIsDeletingRecording(true);
-    setError(null);
+    setActionError(null);
 
     try {
       await invoke("delete_recording", { filePath: recordingToDelete.file_path });
       setRecordings((prev) => prev.filter((r) => r.file_path !== recordingToDelete.file_path));
       setPendingDeleteRecording(null);
-    } catch (deleteError) {
-      console.error("Failed to delete recording:", deleteError);
-      setError("Could not delete the recording.");
+    } catch (err) {
+      console.error("Failed to delete recording:", err);
+      setActionError("Could not delete the recording.");
     } finally {
       setIsDeletingRecording(false);
     }
-  }, [pendingDeleteRecording, isDeletingRecording]);
+  }, [pendingDeleteRecording, isDeletingRecording, setRecordings]);
 
   const cancelDeleteRecording = useCallback(() => {
     if (isDeletingRecording) {
@@ -259,7 +221,7 @@ export function GameModeRecordingsBrowser({
 
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-(--surface-1) px-4 py-3">
-      {error && <p className="mb-2 text-xs text-rose-200">{error}</p>}
+      {displayError && <p className="mb-2 text-xs text-rose-200">{displayError}</p>}
 
       <div className="mb-3 rounded-sm border border-white/10 bg-black/20 p-2.5">
         <div className="mb-2 flex items-center justify-between gap-2">
@@ -284,12 +246,12 @@ export function GameModeRecordingsBrowser({
             <label className="mb-1 block text-[10px] uppercase tracking-[0.09em] text-neutral-500">
               Search
             </label>
-              <input
+              <Input
                 type="text"
+                variant="filter"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder={`Search by ${copy.zoneLabel.toLowerCase()}, ${copy.encounterLabel.toLowerCase()}, filename`}
-                className={filterControlClassName}
               />
             </div>
 
@@ -404,43 +366,21 @@ export function GameModeRecordingsBrowser({
       )}
 
       {pendingDeleteRecording && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-sm border border-white/15 bg-(--surface-2) p-4 shadow-(--surface-glow)">
-            <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-sm border border-rose-300/25 bg-rose-500/12">
-              <AlertTriangle className="h-4 w-4 text-rose-200" />
-            </div>
-            <h3 className="text-sm font-semibold uppercase tracking-[0.11em] text-neutral-100">
-              Delete recording?
-            </h3>
-            <p className="mt-2 text-sm text-neutral-300">
+        <DeleteConfirmDialog
+          title="Delete recording?"
+          description={
+            <>
               This will permanently delete{" "}
               <span className="font-medium text-neutral-100">
                 {getRecordingDisplayTitle(pendingDeleteRecording, gameMode)}
               </span>
               . This action cannot be undone.
-            </p>
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={cancelDeleteRecording}
-                disabled={isDeletingRecording}
-                className="inline-flex h-8 items-center rounded-sm border border-white/20 bg-black/20 px-3 text-xs text-neutral-200 transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void confirmDeleteRecording();
-                }}
-                disabled={isDeletingRecording}
-                className="inline-flex h-8 items-center rounded-sm border border-rose-300/35 bg-rose-500/14 px-3 text-xs font-semibold text-rose-100 transition-colors hover:bg-rose-500/22 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/60 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isDeletingRecording ? "Deleting..." : "Delete"}
-              </button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+          isDeleting={isDeletingRecording}
+          onConfirm={() => { void confirmDeleteRecording(); }}
+          onCancel={cancelDeleteRecording}
+        />
       )}
     </section>
   );

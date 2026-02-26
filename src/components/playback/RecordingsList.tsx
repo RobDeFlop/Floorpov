@@ -1,19 +1,21 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import { AlertTriangle, Clock3, Film, HardDrive, RefreshCw, Trash2, XCircle } from 'lucide-react';
+import { Clock3, Film, HardDrive, RefreshCw, Trash2, XCircle } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRecording } from '../../contexts/RecordingContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useVideo } from '../../contexts/VideoContext';
+import { useRecordingsList } from '../../hooks/useRecordingsList';
 import { panelVariants, smoothTransition } from '../../lib/motion';
 import { RecordingInfo } from '../../types/recording';
+import { type GameMode } from '../../types/ui';
 import { formatBytes, formatDate } from '../../utils/format';
 import { getRecordingDisplayTitle, isRecordingInGameMode } from '../../utils/recording-title';
+import { DeleteConfirmDialog } from '../ui/DeleteConfirmDialog';
 import { useRecordingSelection } from './useRecordingSelection';
 
 interface RecordingsListProps {
-  gameModeContext?: "mythic-plus" | "raid" | "pvp";
+  gameModeContext?: GameMode;
   title?: string;
   description?: string;
   activeRecordingPath?: string | null;
@@ -45,7 +47,7 @@ function extractMythicKeyLevel(recording: RecordingInfo): string | null {
 
 function getModeDetails(
   recording: RecordingInfo,
-  gameModeContext?: RecordingsListProps["gameModeContext"],
+  gameModeContext?: GameMode,
 ): ModeDetails | null {
   if (!gameModeContext) {
     return null;
@@ -88,12 +90,12 @@ export function RecordingsList({
   const { loadVideo, videoSrc, isVideoLoading } = useVideo();
   const { isRecording, loadPlaybackMetadata } = useRecording();
   const reduceMotion = useReducedMotion();
-  const [recordings, setRecordings] = useState<RecordingInfo[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const { recordings, isLoading, error: listError, loadRecordings, setRecordings } = useRecordingsList();
   const [loadingRecordingPath, setLoadingRecordingPath] = useState<string | null>(null);
   const [deletingRecordingPaths, setDeletingRecordingPaths] = useState<string[]>([]);
   const [pendingDeleteRecordings, setPendingDeleteRecordings] = useState<RecordingInfo[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const displayError = deleteError ?? listError;
   const deleteDialogRef = useRef<HTMLDivElement>(null);
   const cancelDeleteButtonRef = useRef<HTMLButtonElement>(null);
   const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
@@ -116,39 +118,13 @@ export function RecordingsList({
     return recordings.filter((recording) => isRecordingInGameMode(recording, gameModeContext));
   }, [gameModeContext, recordings]);
 
-  const loadRecordings = useCallback(async () => {
-    if (!settings.outputFolder) {
-      setRecordings([]);
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const result = await invoke<RecordingInfo[]>('get_recordings_list', {
-        folderPath: settings.outputFolder,
-      });
-      setRecordings([...result].reverse());
-    } catch (loadError) {
-      console.error('Failed to load recordings:', loadError);
-      setError('Could not load recordings from the output folder.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [settings.outputFolder]);
-
-  useEffect(() => {
-    loadRecordings();
-  }, [loadRecordings]);
-
   const handleLoadRecording = useCallback(async (recording: RecordingInfo) => {
     if (isRecording || loadingRecordingPath || isDeletingRecordings || isVideoLoading) {
       return;
     }
 
     setLoadingRecordingPath(recording.file_path);
-    setError(null);
+    setDeleteError(null);
 
     try {
       await loadPlaybackMetadata(recording.file_path);
@@ -158,7 +134,7 @@ export function RecordingsList({
       onRecordingActivate?.(recording);
     } catch (loadError) {
       console.error('Failed to load recording:', loadError);
-      setError('Could not load the selected recording.');
+      setDeleteError('Could not load the selected recording.');
     } finally {
       setLoadingRecordingPath(null);
     }
@@ -276,7 +252,7 @@ export function RecordingsList({
     const pathsBeingDeleted = recordingsToDelete.map((recording) => recording.file_path);
 
     setDeletingRecordingPaths(pathsBeingDeleted);
-    setError(null);
+    setDeleteError(null);
 
     try {
       const deletionResults = await Promise.allSettled(
@@ -311,7 +287,7 @@ export function RecordingsList({
 
       if (failedDeletePaths.length > 0) {
         const deletedCount = deletedPaths.size;
-        setError(
+        setDeleteError(
           failedDeletePaths.length === recordingsToDelete.length
             ? 'Could not delete the selected recordings.'
             : `Deleted ${deletedCount} recording${deletedCount === 1 ? '' : 's'}, but ${failedDeletePaths.length} failed to delete.`,
@@ -319,9 +295,9 @@ export function RecordingsList({
       }
 
       setPendingDeleteRecordings([]);
-    } catch (deleteError) {
-      console.error('Failed to delete recordings:', deleteError);
-      setError('Could not delete the selected recordings.');
+    } catch (err) {
+      console.error('Failed to delete recordings:', err);
+      setDeleteError('Could not delete the selected recordings.');
     } finally {
       setDeletingRecordingPaths([]);
     }
@@ -330,18 +306,9 @@ export function RecordingsList({
     isRecording,
     loadingRecordingPath,
     pendingDeleteRecordings,
+    setRecordings,
     updateSelectionAfterDelete,
   ]);
-
-  useEffect(() => {
-    const unlistenRecordingStopped = listen('recording-stopped', () => {
-      loadRecordings();
-    });
-
-    return () => {
-      unlistenRecordingStopped.then((unsubscribe) => unsubscribe());
-    };
-  }, [loadRecordings]);
 
   const pendingDeleteCount = pendingDeleteRecordings.length;
   const isBulkDelete = pendingDeleteCount > 1;
@@ -366,7 +333,7 @@ export function RecordingsList({
         </div>
       </div>
 
-      {error && <p className="mb-2 text-xs text-red-300" role="status">{error}</p>}
+      {displayError && <p className="mb-2 text-xs text-red-300" role="status">{displayError}</p>}
 
       <div
         className="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable]"
@@ -401,10 +368,8 @@ export function RecordingsList({
                   {selectedRecordingCount > 0 ? `${selectedRecordingCount} selected` : ''}
                 </span>
               </div>
-              
+
               <div className="flex items-center gap-1">
-               
-                
                 {selectedRecordingCount > 0 && (
                   <>
                     <button
@@ -427,11 +392,11 @@ export function RecordingsList({
                     </button>
                   </>
                 )}
-                 <motion.button
+                <motion.button
                   type="button"
                   onClick={loadRecordings}
                   disabled={isLoading || !settings.outputFolder}
-                   className="inline-flex h-6 items-center gap-1 rounded-sm border border-white/20 bg-black/20 px-2 text-xs text-neutral-200 transition-colors hover:bg-white/10 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-6 items-center gap-1 rounded-sm border border-white/20 bg-black/20 px-2 text-xs text-neutral-200 transition-colors hover:bg-white/10 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45 disabled:cursor-not-allowed disabled:opacity-50"
                   whileHover={reduceMotion ? undefined : { y: -1 }}
                   whileTap={reduceMotion ? undefined : { scale: 0.98 }}
                 >
@@ -440,7 +405,7 @@ export function RecordingsList({
                 </motion.button>
               </div>
             </div>
-            
+
             <ul className="space-y-1" role="list">
             {filteredRecordings.map((recording) => {
               const recordingSource = convertFileSrc(recording.file_path);
@@ -528,57 +493,32 @@ export function RecordingsList({
       </div>
 
       {hasPendingDeleteRecordings && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div
-            ref={deleteDialogRef}
-            className="w-full max-w-md rounded-sm border border-white/15 bg-(--surface-2) p-4 shadow-(--surface-glow)"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="delete-recording-title"
-            aria-describedby="delete-recording-description"
-          >
-            <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-sm border border-rose-300/25 bg-rose-500/12">
-              <AlertTriangle className="h-4 w-4 text-rose-200" />
-            </div>
-            <h3 id="delete-recording-title" className="text-sm font-semibold uppercase tracking-[0.11em] text-neutral-100">
-              {isBulkDelete ? 'Delete recordings?' : 'Delete recording?'}
-            </h3>
-            <p id="delete-recording-description" className="mt-2 text-sm text-neutral-300">
-              {isBulkDelete ? (
-                <>
-                  This will permanently delete{" "}
-                  <span className="font-medium text-neutral-100">{pendingDeleteCount} recordings</span>.
-                  This action cannot be undone.
-                </>
-              ) : (
-                <>
-                  This will permanently delete{" "}
-                  <span className="font-medium text-neutral-100">{pendingDeleteRecordings[0].filename}</span>.
-                  This action cannot be undone.
-                </>
-              )}
-            </p>
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                ref={cancelDeleteButtonRef}
-                type="button"
-                onClick={cancelDeleteRecording}
-                disabled={isDeletingRecordings}
-                className="inline-flex h-8 items-center rounded-sm border border-white/20 bg-black/20 px-3 text-xs text-neutral-200 transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmDeleteRecording}
-                disabled={isDeletingRecordings}
-                className="inline-flex h-8 items-center rounded-sm border border-rose-300/35 bg-rose-500/14 px-3 text-xs font-semibold text-rose-100 transition-colors hover:bg-rose-500/22 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/60 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isDeletingRecordings ? 'Deleting...' : isBulkDelete ? 'Delete selected' : 'Delete'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <DeleteConfirmDialog
+          dialogRef={deleteDialogRef}
+          cancelButtonRef={cancelDeleteButtonRef}
+          titleId="delete-recording-title"
+          descriptionId="delete-recording-description"
+          title={isBulkDelete ? 'Delete recordings?' : 'Delete recording?'}
+          description={
+            isBulkDelete ? (
+              <>
+                This will permanently delete{" "}
+                <span className="font-medium text-neutral-100">{pendingDeleteCount} recordings</span>.
+                This action cannot be undone.
+              </>
+            ) : (
+              <>
+                This will permanently delete{" "}
+                <span className="font-medium text-neutral-100">{pendingDeleteRecordings[0].filename}</span>.
+                This action cannot be undone.
+              </>
+            )
+          }
+          isDeleting={isDeletingRecordings}
+          confirmLabel={isBulkDelete ? 'Delete selected' : 'Delete'}
+          onConfirm={confirmDeleteRecording}
+          onCancel={cancelDeleteRecording}
+        />
       )}
     </motion.section>
   );

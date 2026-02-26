@@ -7,6 +7,7 @@ import { useVideo } from "../../contexts/VideoContext";
 import { useMarker } from "../../contexts/MarkerContext";
 import { GameEvent, RecordingEncounterMetadata } from "../../types/events";
 import { formatTime } from "../../utils/format";
+import { AnimatedTooltip } from "../ui/AnimatedTooltip";
 
 interface EncounterTooltipProps {
   encounter: RecordingEncounterMetadata;
@@ -14,20 +15,12 @@ interface EncounterTooltipProps {
 }
 
 function EncounterTooltip({ encounter, x }: EncounterTooltipProps) {
-  const reduceMotion = useReducedMotion();
   const startTime = encounter.startedAtSeconds ?? 0;
   const endTime = encounter.endedAtSeconds;
   const duration = endTime !== undefined ? endTime - startTime : undefined;
 
   return (
-    <motion.div
-      className="absolute bottom-full mb-2 px-2 py-1 bg-neutral-900 border border-neutral-700 text-neutral-200 text-xs rounded whitespace-nowrap pointer-events-none z-10 -translate-x-1/2"
-      style={{ left: x }}
-      initial={reduceMotion ? false : { opacity: 0, y: 4, scale: 0.98 }}
-      animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
-      exit={reduceMotion ? undefined : { opacity: 0, y: 4, scale: 0.98 }}
-      transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-    >
+    <AnimatedTooltip x={x}>
       <div className="font-medium">{encounter.name}</div>
       <div className="text-neutral-400">Start: {formatTime(startTime)}</div>
       {endTime !== undefined && (
@@ -36,7 +29,7 @@ function EncounterTooltip({ encounter, x }: EncounterTooltipProps) {
       {duration !== undefined && (
         <div className="text-neutral-500">Duration: {formatTime(duration)}</div>
       )}
-    </motion.div>
+    </AnimatedTooltip>
   );
 }
 

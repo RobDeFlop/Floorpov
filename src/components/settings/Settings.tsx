@@ -17,6 +17,7 @@ import {
 import { useRecording } from "../../contexts/RecordingContext";
 import { useSettings } from "../../contexts/SettingsContext";
 import { Button } from "../ui/Button";
+import { Input } from "../ui/Input";
 import { FormField } from "../ui/FormField";
 import {
   CaptureSource,
@@ -70,8 +71,7 @@ const FIELD_IDS = {
   enableAutoRecording: "settings-enable-auto-recording",
 };
 
-const NUMBER_FIELD_CLASS_NAME =
-  "w-full rounded-sm border border-white/20 bg-black/20 px-3 py-2 text-sm text-neutral-100 transition-colors placeholder:text-neutral-400 focus:border-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-black/10 disabled:text-neutral-500";
+
 
 function formatCaptureWindowLabel(title: string, processName: string | null): string {
   return processName && processName.trim().length > 0 ? `${title} (${processName})` : title;
@@ -414,14 +414,13 @@ export function Settings() {
                 label="Maximum Storage (GB)"
                 description={`Old recordings will be automatically deleted when this limit is reached (minimum ${MIN_STORAGE_GB} GB)`}
               >
-                <input
+                <Input
                   id={FIELD_IDS.maxStorageGB}
                   type="number"
                   min={MIN_STORAGE_GB}
                   max={MAX_STORAGE_GB}
                   value={formData.maxStorageGB}
                   onChange={(e) => setFormData({ ...formData, maxStorageGB: parseInt(e.target.value) || MIN_STORAGE_GB })}
-                  className={NUMBER_FIELD_CLASS_NAME}
                 />
               </FormField>
             </div>

@@ -27,3 +27,19 @@ export interface RecordingInfo {
   encounter_category?: string;
   key_level?: number;
 }
+
+/** Settings payload sent to the Rust `start_recording` command. */
+export interface RecordingCommandSettings {
+  video_quality: string;
+  frame_rate: number;
+  bitrate: number;
+  capture_source: string;
+  capture_window_hwnd: string;
+  capture_window_title: string;
+  enable_system_audio: boolean;
+  enable_recording_diagnostics: boolean;
+}
+
+export type RecordingOrigin = "manual" | "auto";
+export type AutoTriggerMode = "mythicPlus" | "raid" | "pvp";
+

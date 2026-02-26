@@ -16,6 +16,22 @@ export function formatDate(timestampSeconds: number): string {
   return new Date(timestampSeconds * 1000).toLocaleString();
 }
 
+export function formatEncounterCategory(category?: string): string {
+  if (!category) {
+    return "Unknown";
+  }
+
+  if (category === "mythicPlus" || category === "mythic-plus") {
+    return "Mythic+";
+  }
+
+  if (category === "pvp") {
+    return "PvP";
+  }
+
+  return category.charAt(0).toUpperCase() + category.slice(1);
+}
+
 export function getEventTypeLabel(eventType: string): string {
   switch (eventType) {
     case "PARTY_KILL":

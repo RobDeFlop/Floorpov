@@ -14,17 +14,17 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
 import { useRecording } from "../../contexts/RecordingContext";
 import { formatTime } from "../../utils/format";
+import { type AppView } from "../../types/ui";
 import { SidebarDividerBlock } from "./sidebar/SidebarDividerBlock";
 import { SidebarNavButton } from "./sidebar/SidebarNavButton";
 import { SidebarSectionLabel } from "./sidebar/SidebarSectionLabel";
-
 
 const gameModes = ["Mythic+", "Raid", "PvP"];
 const REPOSITORY_URL = "https://github.com/RobDeFlop/FloorPoV";
 
 interface SidebarProps {
-  onNavigate: (view: "main" | "settings" | "debug" | "mythic-plus" | "raid" | "pvp") => void;
-  currentView: "main" | "settings" | "debug" | "mythic-plus" | "raid" | "pvp";
+  onNavigate: (view: AppView) => void;
+  currentView: AppView;
   isDebugMode: boolean;
 }
 

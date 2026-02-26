@@ -15,8 +15,9 @@ import { SettingsProvider } from "../../contexts/SettingsContext";
 import { MarkerProvider } from "../../contexts/MarkerContext";
 import { panelVariants, smoothTransition } from "../../lib/motion";
 import { MEDIA_SECTION_RESIZE_DELTA } from "../../types/settings";
+import { type AppView } from "../../types/ui";
 
-type AppView = "main" | "settings" | "debug" | "mythic-plus" | "raid" | "pvp";
+export type { AppView };
 const GAME_MODE_VIEWS = new Set<AppView>(["mythic-plus", "raid", "pvp"]);
 
 export function Layout() {

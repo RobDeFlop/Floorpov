@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   Clapperboard,
+  ChevronDown,
   FileSearch,
   FileText,
   LoaderCircle,
@@ -9,17 +10,19 @@ import {
   Trophy,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { useMarker } from "../../contexts/MarkerContext";
 import { RecordingMetadata } from "../../types/events";
 import { RecordingInfo } from "../../types/recording";
-import { formatBytes, formatDate, formatTime, getEventTypeLabel } from "../../utils/format";
+import { type GameMode } from "../../types/ui";
+import { formatBytes, formatDate, formatEncounterCategory, formatTime, getEventTypeLabel } from "../../utils/format";
 import { getRecordingDisplayTitle } from "../../utils/recording-title";
 import { GameEvents } from "../events/GameEvents";
 import { VideoPlayer } from "../playback/VideoPlayer";
 import { TabControls, type TabControlItem } from "../ui/TabControls";
 import { GameModeRecordingsBrowser } from "./GameModeRecordingsBrowser";
+import { PlayerStatChart } from "./PlayerStatChart";
 
-type GameMode = "mythic-plus" | "raid" | "pvp";
 type AnalysisTab = "video-analysis" | "log-analysis" | "metadata";
 
 const ANALYSIS_TAB_ITEMS: TabControlItem<AnalysisTab>[] = [
@@ -74,21 +77,8 @@ const gameModeConfig: Record<GameMode, GameModeConfigItem> = {
   },
 };
 
-function formatEncounterCategory(category?: string): string {
-  if (!category) {
-    return "Unknown";
-  }
 
-  if (category === "mythicPlus" || category === "mythic-plus") {
-    return "Mythic+";
-  }
 
-  if (category === "pvp") {
-    return "PvP";
-  }
-
-  return category.charAt(0).toUpperCase() + category.slice(1);
-}
 
 export function GameModePage({ gameMode }: GameModePageProps) {
   const config = gameModeConfig[gameMode];
@@ -104,6 +94,7 @@ export function GameModePage({ gameMode }: GameModePageProps) {
     guardian: true,
     unknown: true,
   });
+  const [isEventsOpen, setIsEventsOpen] = useState(false);
   const metadataRequestPathRef = useRef<string | null>(null);
   const { setEncounters } = useMarker();
 
@@ -174,6 +165,42 @@ export function GameModePage({ gameMode }: GameModePageProps) {
     const events = recordingMetadata?.importantEvents ?? [];
     return events.filter((event) => filterEvent(event.targetKind, event.target));
   }, [recordingMetadata?.importantEvents, filterEvent]);
+
+  const playerStats = useMemo(() => {
+    const events = recordingMetadata?.importantEvents ?? [];
+
+    // Strip the realm suffix from "PlayerName-ServerName" WoW name format.
+    const stripRealm = (name: string) => name.split("-")[0];
+
+    const kickCounts: Record<string, number> = {};
+    const dispelCounts: Record<string, number> = {};
+    const deathCounts: Record<string, number> = {};
+
+    for (const event of events) {
+      if (event.eventType === "SPELL_INTERRUPT" && event.source) {
+        const key = stripRealm(event.source);
+        kickCounts[key] = (kickCounts[key] ?? 0) + 1;
+      } else if (event.eventType === "SPELL_DISPEL" && event.source) {
+        const key = stripRealm(event.source);
+        dispelCounts[key] = (dispelCounts[key] ?? 0) + 1;
+      } else if (event.eventType === "UNIT_DIED" && event.target && event.targetKind === "PLAYER") {
+        const key = stripRealm(event.target);
+        deathCounts[key] = (deathCounts[key] ?? 0) + 1;
+      }
+    }
+
+    const toSorted = (counts: Record<string, number>) =>
+      Object.entries(counts)
+        .map(([player, count]) => ({ player, count }))
+        .sort((a, b) => b.count - a.count);
+
+    return {
+      kicks: toSorted(kickCounts),
+      dispels: toSorted(dispelCounts),
+      deaths: toSorted(deathCounts),
+    };
+  }, [recordingMetadata?.importantEvents]);
+
   const encounters = recordingMetadata?.encounters ?? [];
 
   useEffect(() => {
@@ -333,6 +360,33 @@ export function GameModePage({ gameMode }: GameModePageProps) {
                       )}
                     </section>
 
+                    {(playerStats.kicks.length > 0 ||
+                      playerStats.dispels.length > 0 ||
+                      playerStats.deaths.length > 0) && (
+                      <section className="mt-3 rounded-sm border border-white/10 bg-(--surface-1)/80 p-3">
+                        <h3 className="text-xs font-semibold uppercase tracking-[0.1em] text-neutral-300">
+                          Player Stats
+                        </h3>
+                        <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
+                          <PlayerStatChart
+                            title="Kicks"
+                            data={playerStats.kicks}
+                            color="#34d399"
+                          />
+                          <PlayerStatChart
+                            title="Dispels"
+                            data={playerStats.dispels}
+                            color="#60a5fa"
+                          />
+                          <PlayerStatChart
+                            title="Deaths"
+                            data={playerStats.deaths}
+                            color="#f87171"
+                          />
+                        </div>
+                      </section>
+                    )}
+
                     <section className="mt-3 rounded-sm border border-white/10 bg-(--surface-1)/80 p-3">
                       <h3 className="text-xs font-semibold uppercase tracking-[0.1em] text-neutral-300">
                         Encounter Segments
@@ -362,101 +416,122 @@ export function GameModePage({ gameMode }: GameModePageProps) {
                       )}
                     </section>
 
-                    <section className="mt-3 rounded-sm border border-white/10 bg-(--surface-1)/80 p-4">
-                      <div className="flex flex-col gap-3">
-                        <div className="flex flex-wrap items-center gap-3">
-                          <h3 className="text-sm font-semibold uppercase tracking-caps text-neutral-200">
-                            Important Events
-                          </h3>
-                          <div className="flex items-center gap-2">
-                            <div className="flex items-baseline gap-1.5">
-                              <span className="text-[10px] uppercase tracking-caps text-neutral-500">Showing:</span>
-                              <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-300 border border-emerald-500/25">
-                                {importantEvents.length}
-                              </span>
-                            </div>
-                            <span className="text-neutral-600">|</span>
-                            <div className="flex items-baseline gap-1.5">
-                              <span className="text-[10px] uppercase tracking-caps text-neutral-500">Total:</span>
-                              <span className="rounded bg-white/10 px-2 py-0.5 text-xs font-medium text-neutral-300 border border-white/15">
-                                {recordingMetadata?.importantEvents?.length ?? 0}
-                              </span>
-                            </div>
+                    <section className="mt-3 rounded-sm border border-white/10 bg-(--surface-1)/80">
+                      <button
+                        type="button"
+                        onClick={() => setIsEventsOpen((o) => !o)}
+                        className="flex w-full items-center gap-2 px-4 py-3 text-left"
+                      >
+                        <ChevronDown
+                          className={`h-3.5 w-3.5 shrink-0 text-neutral-400 transition-transform duration-200 ${isEventsOpen ? "rotate-180" : ""}`}
+                        />
+                        <h3 className="text-sm font-semibold uppercase tracking-caps text-neutral-200">
+                          Important Events
+                        </h3>
+                        <div className="ml-1 flex items-center gap-2">
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-[10px] uppercase tracking-caps text-neutral-500">Showing:</span>
+                            <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-300 border border-emerald-500/25">
+                              {importantEvents.length}
+                            </span>
+                          </div>
+                          <span className="text-neutral-600">|</span>
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-[10px] uppercase tracking-caps text-neutral-500">Total:</span>
+                            <span className="rounded bg-white/10 px-2 py-0.5 text-xs font-medium text-neutral-300 border border-white/15">
+                              {recordingMetadata?.importantEvents?.length ?? 0}
+                            </span>
                           </div>
                         </div>
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                          <span className="text-xs font-medium uppercase tracking-caps text-neutral-400">Show:</span>
-                          <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-300 hover:text-neutral-100 transition-colors">
-                            <input
-                              type="checkbox"
-                              checked={filters.npc}
-                              onChange={(e) => setFilters((f) => ({ ...f, npc: e.target.checked }))}
-                              className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
-                            />
-                            NPC
-                          </label>
-                          <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-300 hover:text-neutral-100 transition-colors">
-                            <input
-                              type="checkbox"
-                              checked={filters.pet}
-                              onChange={(e) => setFilters((f) => ({ ...f, pet: e.target.checked }))}
-                              className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
-                            />
-                            Pet
-                          </label>
-                          <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-300 hover:text-neutral-100 transition-colors">
-                            <input
-                              type="checkbox"
-                              checked={filters.guardian}
-                              onChange={(e) => setFilters((f) => ({ ...f, guardian: e.target.checked }))}
-                              className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
-                            />
-                            Guardian
-                          </label>
-                          <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-300 hover:text-neutral-100 transition-colors">
-                            <input
-                              type="checkbox"
-                              checked={filters.unknown}
-                              onChange={(e) => setFilters((f) => ({ ...f, unknown: e.target.checked }))}
-                              className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
-                            />
-                            Unknown
-                          </label>
-                        </div>
-                      </div>
-                      {importantEvents.length === 0 ? (
-                        <p className="mt-2 text-xs text-neutral-500">No important events in metadata.</p>
-                      ) : (
-                        <div className="mt-2 overflow-hidden rounded-sm border border-white/10 bg-black/20">
-                          <table className="min-w-full text-left text-xs text-neutral-300">
-                            <thead className="bg-(--surface-2) text-neutral-400">
-                              <tr>
-                                <th className="px-2 py-1.5 font-medium">Time</th>
-                                <th className="px-2 py-1.5 font-medium">Event</th>
-                                <th className="px-2 py-1.5 font-medium">Source</th>
-                                <th className="px-2 py-1.5 font-medium">Target</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {importantEvents.map((event, index) => (
-                                <tr
-                                  key={`${event.eventType}-${event.timestampSeconds}-${index}`}
-                                  className="border-t border-white/10"
-                                >
-                                  <td className="px-2 py-1.5 text-neutral-200">
-                                    {formatTime(event.timestampSeconds)}
-                                  </td>
-                                  <td className="px-2 py-1.5 text-amber-200">
-                                    {getEventTypeLabel(event.eventType)}
-                                  </td>
-                                  <td className="px-2 py-1.5 text-neutral-300">{event.source || "-"}</td>
-                                  <td className="px-2 py-1.5 text-neutral-300">{event.target || "-"}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
+                      </button>
+
+                      <AnimatePresence initial={false}>
+                        {isEventsOpen && (
+                          <motion.div
+                            key="events-body"
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.2, ease: "easeInOut" }}
+                            style={{ overflow: "hidden" }}
+                          >
+                            <div className="flex flex-col gap-3 border-t border-white/10 px-4 pb-4 pt-3">
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                                <span className="text-xs font-medium uppercase tracking-caps text-neutral-400">Show:</span>
+                                <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-300 hover:text-neutral-100 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={filters.npc}
+                                    onChange={(e) => setFilters((f) => ({ ...f, npc: e.target.checked }))}
+                                    className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                                  />
+                                  NPC
+                                </label>
+                                <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-300 hover:text-neutral-100 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={filters.pet}
+                                    onChange={(e) => setFilters((f) => ({ ...f, pet: e.target.checked }))}
+                                    className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                                  />
+                                  Pet
+                                </label>
+                                <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-300 hover:text-neutral-100 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={filters.guardian}
+                                    onChange={(e) => setFilters((f) => ({ ...f, guardian: e.target.checked }))}
+                                    className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                                  />
+                                  Guardian
+                                </label>
+                                <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-300 hover:text-neutral-100 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={filters.unknown}
+                                    onChange={(e) => setFilters((f) => ({ ...f, unknown: e.target.checked }))}
+                                    className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                                  />
+                                  Unknown
+                                </label>
+                              </div>
+                              {importantEvents.length === 0 ? (
+                                <p className="text-xs text-neutral-500">No important events in metadata.</p>
+                              ) : (
+                                <div className="overflow-hidden rounded-sm border border-white/10 bg-black/20">
+                                  <table className="min-w-full text-left text-xs text-neutral-300">
+                                    <thead className="bg-(--surface-2) text-neutral-400">
+                                      <tr>
+                                        <th className="px-2 py-1.5 font-medium">Time</th>
+                                        <th className="px-2 py-1.5 font-medium">Event</th>
+                                        <th className="px-2 py-1.5 font-medium">Source</th>
+                                        <th className="px-2 py-1.5 font-medium">Target</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {importantEvents.map((event, index) => (
+                                        <tr
+                                          key={`${event.eventType}-${event.timestampSeconds}-${index}`}
+                                          className="border-t border-white/10"
+                                        >
+                                          <td className="px-2 py-1.5 text-neutral-200">
+                                            {formatTime(event.timestampSeconds)}
+                                          </td>
+                                          <td className="px-2 py-1.5 text-amber-200">
+                                            {getEventTypeLabel(event.eventType)}
+                                          </td>
+                                          <td className="px-2 py-1.5 text-neutral-300">{event.source || "-"}</td>
+                                          <td className="px-2 py-1.5 text-neutral-300">{event.target || "-"}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     </section>
                   </>
                 )}
