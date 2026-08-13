@@ -542,7 +542,7 @@ fn fight_event_time_range(fight: &ParserFight) -> Option<(i64, i64)> {
         .lines()
         .filter_map(event_timestamp_millis);
     let start = timestamps.next()?;
-    let end = timestamps.last().unwrap_or(start);
+    let end = timestamps.next_back().unwrap_or(start);
     Some((start, end))
 }
 
@@ -865,7 +865,7 @@ mod tests {
 
     #[test]
     fn derives_pull_times_from_combat_log_events_when_parser_times_are_missing() {
-        let fights = vec![fight(
+        let fights = [fight(
             "7/17/2026 18:16:18.1282  ENCOUNTER_START,3071,\"Arcanotron Custos\",8,5,2811\n7/17/2026 18:19:19.9022  ENCOUNTER_END,3071,\"Arcanotron Custos\",8,5,1,181780",
             Some("Arcanotron Custos"),
             Some("Raid"),
