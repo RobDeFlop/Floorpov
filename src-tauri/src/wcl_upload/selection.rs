@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
-use crate::combat_log::parse::extract_raw_event_type_from_line;
+use chrono::{Datelike, NaiveDateTime, Utc};
+
+use crate::combat_log::parse::{extract_log_timestamp, extract_raw_event_type_from_line};
 use crate::wcl_upload::types::{ParserFight, WclActivity, WclActivityGroup};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +40,9 @@ pub(crate) struct RawActivity {
     status: String,
     difficulty: Option<i64>,
     key_level: Option<u32>,
+    pvp_format: Option<String>,
+    started_at: Option<i64>,
+    ended_at: Option<i64>,
 }
 
 #[derive(Debug)]
@@ -47,6 +52,8 @@ struct OpenRawActivity {
     title: Option<String>,
     difficulty: Option<i64>,
     key_level: Option<u32>,
+    pvp_format: Option<String>,
+    started_at: Option<i64>,
 }
 
 #[derive(Debug, Default)]
@@ -62,16 +69,19 @@ impl RawActivityTracker {
             return;
         };
         let fields = raw_event_fields(line);
+        let event_timestamp = event_timestamp_millis(line);
 
         match event_type {
             "CHALLENGE_MODE_START" => {
-                self.close_open_activity("incomplete");
+                self.close_open_activity("incomplete", event_timestamp);
                 self.open_activity = Some(OpenRawActivity {
                     id: self.take_activity_id(),
                     kind: ActivityKind::MythicPlus,
                     title: fields.first().and_then(|value| non_empty(value)),
                     difficulty: None,
                     key_level: fields.get(3).and_then(|value| value.parse::<u32>().ok()),
+                    pvp_format: None,
+                    started_at: event_timestamp,
                 });
             }
             "CHALLENGE_MODE_END" => {
@@ -80,20 +90,29 @@ impl RawActivityTracker {
                 } else {
                     "incomplete"
                 };
-                self.close_matching_activity(ActivityKind::MythicPlus, status);
+                self.close_matching_activity(ActivityKind::MythicPlus, status, event_timestamp);
             }
             "ARENA_MATCH_START" | "PVP_MATCH_START" | "BATTLEGROUND_START" => {
-                self.close_open_activity("incomplete");
+                self.close_open_activity("incomplete", event_timestamp);
                 self.open_activity = Some(OpenRawActivity {
                     id: self.take_activity_id(),
                     kind: ActivityKind::Pvp,
                     title: None,
                     difficulty: None,
                     key_level: None,
+                    pvp_format: Some(
+                        match event_type {
+                            "ARENA_MATCH_START" => "Arena",
+                            "BATTLEGROUND_START" => "Battleground",
+                            _ => "PvP Match",
+                        }
+                        .to_string(),
+                    ),
+                    started_at: event_timestamp,
                 });
             }
             "ARENA_MATCH_END" | "PVP_MATCH_COMPLETE" | "BATTLEGROUND_END" => {
-                self.close_matching_activity(ActivityKind::Pvp, "complete");
+                self.close_matching_activity(ActivityKind::Pvp, "complete", event_timestamp);
             }
             "ENCOUNTER_START" => {
                 if self.open_activity.as_ref().is_some_and(|activity| {
@@ -101,13 +120,15 @@ impl RawActivityTracker {
                 }) {
                     return;
                 }
-                self.close_open_activity("incomplete");
+                self.close_open_activity("incomplete", event_timestamp);
                 self.open_activity = Some(OpenRawActivity {
                     id: self.take_activity_id(),
                     kind: ActivityKind::Raid,
                     title: fields.get(1).and_then(|value| non_empty(value)),
                     difficulty: fields.get(2).and_then(|value| value.parse::<i64>().ok()),
                     key_level: None,
+                    pvp_format: None,
+                    started_at: event_timestamp,
                 });
             }
             "ENCOUNTER_END" => {
@@ -116,7 +137,7 @@ impl RawActivityTracker {
                 } else {
                     "wipe"
                 };
-                self.close_matching_activity(ActivityKind::Raid, status);
+                self.close_matching_activity(ActivityKind::Raid, status, event_timestamp);
             }
             _ => {}
         }
@@ -131,6 +152,9 @@ impl RawActivityTracker {
                 status: "incomplete".to_string(),
                 difficulty: open_activity.difficulty,
                 key_level: open_activity.key_level,
+                pvp_format: open_activity.pvp_format,
+                started_at: open_activity.started_at,
+                ended_at: None,
             });
         }
         self.activities
@@ -146,17 +170,17 @@ impl RawActivityTracker {
         id
     }
 
-    fn close_matching_activity(&mut self, kind: ActivityKind, status: &str) {
+    fn close_matching_activity(&mut self, kind: ActivityKind, status: &str, ended_at: Option<i64>) {
         if self
             .open_activity
             .as_ref()
             .is_some_and(|activity| activity.kind == kind)
         {
-            self.close_open_activity(status);
+            self.close_open_activity(status, ended_at);
         }
     }
 
-    fn close_open_activity(&mut self, status: &str) {
+    fn close_open_activity(&mut self, status: &str, ended_at: Option<i64>) {
         let Some(open_activity) = self.open_activity.take() else {
             return;
         };
@@ -167,6 +191,9 @@ impl RawActivityTracker {
             status: status.to_string(),
             difficulty: open_activity.difficulty,
             key_level: open_activity.key_level,
+            pvp_format: open_activity.pvp_format,
+            started_at: open_activity.started_at,
+            ended_at,
         });
     }
 }
@@ -273,8 +300,29 @@ pub(crate) fn build_activity_groups(
 fn build_activity(window: &ActivityWindow, activity_id: &str, occurrence: usize) -> WclActivity {
     let kind = window.kind;
     let fights = &window.fights;
-    let started_at = fights.iter().filter_map(|fight| fight.start_time).min();
-    let ended_at = fights.iter().filter_map(|fight| fight.end_time).max();
+    let event_time_range = fights.iter().filter_map(fight_event_time_range).fold(
+        None,
+        |range: Option<(i64, i64)>, (start, end)| {
+            Some(match range {
+                Some((current_start, current_end)) => {
+                    (current_start.min(start), current_end.max(end))
+                }
+                None => (start, end),
+            })
+        },
+    );
+    let started_at = window
+        .raw_activity
+        .as_ref()
+        .and_then(|activity| activity.started_at)
+        .or_else(|| fights.iter().filter_map(|fight| fight.start_time).min())
+        .or_else(|| event_time_range.map(|(start, _)| start));
+    let ended_at = window
+        .raw_activity
+        .as_ref()
+        .and_then(|activity| activity.ended_at)
+        .or_else(|| fights.iter().filter_map(|fight| fight.end_time).max())
+        .or_else(|| event_time_range.map(|(_, end)| end));
     let duration_ms = match (started_at, ended_at) {
         (Some(start), Some(end)) if end >= start => Some(end - start),
         _ => None,
@@ -488,6 +536,33 @@ fn is_raid_fight(fight: &ParserFight) -> bool {
             }))
 }
 
+fn fight_event_time_range(fight: &ParserFight) -> Option<(i64, i64)> {
+    let mut timestamps = fight
+        .events_string
+        .lines()
+        .filter_map(event_timestamp_millis);
+    let start = timestamps.next()?;
+    let end = timestamps.last().unwrap_or(start);
+    Some((start, end))
+}
+
+fn event_timestamp_millis(line: &str) -> Option<i64> {
+    let header = line.split(',').next()?.trim();
+    let timestamp = extract_log_timestamp(header);
+    let with_year_formats = ["%m/%d/%Y %H:%M:%S%.f", "%m/%d/%y %H:%M:%S%.f"];
+    for format in with_year_formats {
+        if let Ok(parsed) = NaiveDateTime::parse_from_str(&timestamp, format) {
+            return Some(parsed.and_utc().timestamp_millis());
+        }
+    }
+
+    let year = Utc::now().year();
+    let timestamp_with_year = format!("{year}/{timestamp}");
+    NaiveDateTime::parse_from_str(&timestamp_with_year, "%Y/%m/%d %H:%M:%S%.f")
+        .ok()
+        .map(|parsed| parsed.and_utc().timestamp_millis())
+}
+
 fn raw_event_fields(line: &str) -> Vec<String> {
     line.split(',')
         .skip(1)
@@ -577,8 +652,53 @@ fn group_subtitle(window: &ActivityWindow) -> Option<String> {
             .as_ref()
             .and_then(|activity| activity.difficulty)
             .or_else(|| fight.and_then(|fight| fight.difficulty))
-            .map(|difficulty| format!("Difficulty {difficulty}")),
-        ActivityKind::MythicPlus | ActivityKind::Pvp | ActivityKind::Other => None,
+            .map(difficulty_label),
+        ActivityKind::MythicPlus => window
+            .raw_activity
+            .as_ref()
+            .and_then(|activity| activity.key_level)
+            .or_else(|| extract_key_level(&window.fights))
+            .map(|level| format!("Keystone +{level}")),
+        ActivityKind::Pvp => window
+            .raw_activity
+            .as_ref()
+            .and_then(|activity| activity.pvp_format.clone())
+            .or_else(|| pvp_format(&window.fights)),
+        ActivityKind::Other => None,
+    }
+}
+
+fn pvp_format(fights: &[ParserFight]) -> Option<String> {
+    if fights
+        .iter()
+        .any(|fight| contains_event(fight, "ARENA_MATCH_START"))
+    {
+        return Some("Arena".to_string());
+    }
+    if fights
+        .iter()
+        .any(|fight| contains_event(fight, "BATTLEGROUND_START"))
+    {
+        return Some("Battleground".to_string());
+    }
+    if fights
+        .iter()
+        .any(|fight| contains_event(fight, "PVP_MATCH_START"))
+    {
+        return Some("PvP Match".to_string());
+    }
+    None
+}
+
+fn difficulty_label(difficulty: i64) -> String {
+    match difficulty {
+        1 | 14 => "Normal".to_string(),
+        2 | 15 => "Heroic".to_string(),
+        7 | 17 => "Raid Finder".to_string(),
+        8 => "Mythic+".to_string(),
+        16 | 23 => "Mythic".to_string(),
+        233 => "Mythic Flex".to_string(),
+        _ => format!("Difficulty {difficulty}"),
     }
 }
 
@@ -718,11 +838,84 @@ mod tests {
         assert_eq!(groups[0].kind, "mythicPlus");
         assert_eq!(groups[0].activities.len(), 1);
         assert_eq!(groups[0].activities[0].key_level, Some(14));
+        assert_eq!(groups[0].subtitle.as_deref(), Some("Keystone +14"));
         assert_eq!(groups[1].kind, "raid");
         assert_eq!(groups[1].activities.len(), 2);
         assert_eq!(groups[1].activities[0].status, "kill");
         assert_eq!(groups[1].activities[1].status, "wipe");
         assert_eq!(keys.len(), 3);
+    }
+
+    #[test]
+    fn uses_readable_activity_and_difficulty_labels() {
+        let mut raid_fight = fight(
+            "ENCOUNTER_START,3071,\"Arcanotron Custos\",233,5,2811\nENCOUNTER_END,3071,\"Arcanotron Custos\",233,5,1",
+            Some("Arcanotron Custos"),
+            Some("Raid"),
+            0,
+            100,
+        );
+        raid_fight.difficulty = Some(233);
+
+        let (groups, _) = build_activity_groups(&[raid_fight], &[], &HashMap::new());
+
+        assert_eq!(groups[0].kind, "raid");
+        assert_eq!(groups[0].subtitle.as_deref(), Some("Mythic Flex"));
+    }
+
+    #[test]
+    fn derives_pull_times_from_combat_log_events_when_parser_times_are_missing() {
+        let fights = vec![fight(
+            "7/17/2026 18:16:18.1282  ENCOUNTER_START,3071,\"Arcanotron Custos\",8,5,2811\n7/17/2026 18:19:19.9022  ENCOUNTER_END,3071,\"Arcanotron Custos\",8,5,1,181780",
+            Some("Arcanotron Custos"),
+            Some("Raid"),
+            0,
+            0,
+        )];
+        let mut fight_without_parser_times = fights[0].clone();
+        fight_without_parser_times.start_time = None;
+        fight_without_parser_times.end_time = None;
+
+        let (groups, _) =
+            build_activity_groups(&[fight_without_parser_times], &[], &HashMap::new());
+        let activity = &groups[0].activities[0];
+
+        assert_eq!(activity.started_at, Some(1_784_312_178_128));
+        assert_eq!(activity.duration_ms, Some(181_774));
+    }
+
+    #[test]
+    fn derives_encounter_times_from_boundary_lines_when_parser_data_has_none() {
+        let start_line =
+            "7/17/2026 18:16:18.1282  ENCOUNTER_START,3071,\"Arcanotron Custos\",233,5,2811";
+        let end_line = "7/17/2026 18:19:19.9022  ENCOUNTER_END,3071,\"Arcanotron Custos\",233,5,1";
+        let mut tracker = RawActivityTracker::default();
+        tracker.observe_line(start_line);
+
+        let mut encounter_fight = fight(
+            "0,SPELL_DAMAGE",
+            Some("Arcanotron Custos"),
+            Some("Raid"),
+            0,
+            0,
+        );
+        encounter_fight.start_time = None;
+        encounter_fight.end_time = None;
+        let mut activity_by_fight = HashMap::new();
+        record_fight_activity(
+            &[encounter_fight.clone()],
+            tracker.active_activity_id(),
+            &mut activity_by_fight,
+        );
+        tracker.observe_line(end_line);
+
+        let (groups, _) =
+            build_activity_groups(&[encounter_fight], &tracker.finish(), &activity_by_fight);
+        let activity = &groups[0].activities[0];
+
+        assert_eq!(activity.started_at, Some(1_784_312_178_128));
+        assert_eq!(activity.ended_at, Some(1_784_312_359_902));
+        assert_eq!(activity.duration_ms, Some(181_774));
     }
 
     #[test]
@@ -738,6 +931,7 @@ mod tests {
         let (groups, _) = build_activity_groups(&fights, &[], &HashMap::new());
 
         assert_eq!(groups[0].kind, "pvp");
+        assert_eq!(groups[0].subtitle.as_deref(), Some("PvP Match"));
         assert_eq!(groups[0].activities[0].status, "incomplete");
     }
 
@@ -767,6 +961,7 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].kind, "mythicPlus");
         assert_eq!(groups[0].title, "Windrunner Spire");
+        assert_eq!(groups[0].subtitle.as_deref(), Some("Keystone +10"));
     }
 
     #[test]

@@ -16,11 +16,18 @@ interface WclActivitySelectionModalProps {
   onRetry: () => void;
 }
 
-function formatTimestamp(timestamp: number | null): string {
-  if (timestamp === null) {
-    return "Unknown time";
-  }
-  return new Date(timestamp).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
+const ACTIVITY_DATE_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "UTC",
+});
+
+function formatTimestamp(timestamp: number): string {
+  return ACTIVITY_DATE_FORMATTER.format(new Date(timestamp));
 }
 
 function formatDuration(durationMs: number | null): string {
@@ -34,7 +41,47 @@ function formatDuration(durationMs: number | null): string {
 }
 
 function statusLabel(status: string): string {
-  return status === "incomplete" ? "Incomplete" : status[0].toUpperCase() + status.slice(1);
+  switch (status) {
+    case "kill":
+      return "Kill";
+    case "wipe":
+      return "Wipe";
+    case "complete":
+      return "Complete";
+    case "incomplete":
+      return "Incomplete";
+    default:
+      return status ? status[0].toUpperCase() + status.slice(1) : "Unknown";
+  }
+}
+
+function kindLabel(kind: string): string {
+  switch (kind) {
+    case "raid":
+      return "Raid";
+    case "mythicPlus":
+      return "Mythic+";
+    case "pvp":
+      return "PvP";
+    case "other":
+      return "Other";
+    default:
+      return kind;
+  }
+}
+
+function statusClass(status: string): string {
+  switch (status) {
+    case "kill":
+    case "complete":
+      return "text-emerald-300";
+    case "wipe":
+      return "text-rose-300";
+    case "incomplete":
+      return "text-amber-200";
+    default:
+      return "text-neutral-500";
+  }
 }
 
 export function WclActivitySelectionModal({
@@ -203,7 +250,7 @@ export function WclActivitySelectionModal({
                           >
                             <span className="block truncate text-sm font-medium text-neutral-100">{group.title}</span>
                             <span className="text-xs text-neutral-500">
-                              {group.kind} · {selectedChildren}/{group.activities.length} selected
+                              {kindLabel(group.kind)} · {selectedChildren}/{group.activities.length} selected
                               {group.subtitle ? ` · ${group.subtitle}` : ""}
                             </span>
                           </button>
@@ -231,22 +278,41 @@ export function WclActivitySelectionModal({
                                     <Check className="h-3 w-3" />
                                   </span>
                                   <span className="min-w-0">
-                                    <span className="block truncate text-xs font-medium text-neutral-200">
-                                      {activity.title}{activity.subtitle ? ` · ${activity.subtitle}` : ""}
+                                    <span className="flex min-w-0 items-center gap-2">
+                                      <span className="truncate text-xs font-medium text-neutral-200">
+                                        {activity.title}
+                                      </span>
+                                      <span
+                                        className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px]
+                                          uppercase tracking-wide ${statusClass(activity.status)}`}
+                                      >
+                                        {statusLabel(activity.status)}
+                                      </span>
                                     </span>
-                                    <span className="block truncate text-[11px] text-neutral-500">
-                                      {formatTimestamp(activity.startedAt)} · {formatDuration(activity.durationMs)}
-                                      {activity.keyLevel ? ` · +${activity.keyLevel}` : ""}
+                                    {activity.subtitle && (
+                                      <span className="mt-0.5 block truncate text-[11px] text-neutral-400">
+                                        {activity.subtitle}
+                                      </span>
+                                    )}
+                                    <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-neutral-500">
+                                      {activity.startedAt !== null && (
+                                        <span>
+                                          <span className="text-neutral-400">Started</span>{" "}
+                                          {formatTimestamp(activity.startedAt)}
+                                        </span>
+                                      )}
+                                      {activity.durationMs !== null && (
+                                        <span>
+                                          <span className="text-neutral-400">Duration</span>{" "}
+                                          {formatDuration(activity.durationMs)}
+                                        </span>
+                                      )}
+                                      {activity.keyLevel !== null && (
+                                        <span>
+                                          <span className="text-neutral-400">Keystone</span> +{activity.keyLevel}
+                                        </span>
+                                      )}
                                     </span>
-                                  </span>
-                                  <span
-                                    className={`text-[10px] uppercase tracking-wide ${
-                                      activity.status === "incomplete" || activity.status === "wipe"
-                                        ? "text-amber-200"
-                                        : "text-neutral-500"
-                                    }`}
-                                  >
-                                    {statusLabel(activity.status)}
                                   </span>
                                 </button>
                               );
