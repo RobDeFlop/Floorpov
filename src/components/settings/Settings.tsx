@@ -381,13 +381,18 @@ export function Settings() {
             </div>
             <h2 className="mb-2 text-lg font-semibold text-neutral-100">Settings are temporarily locked</h2>
             <p className="text-sm text-neutral-300">
-              Stop recording from Home to edit settings. Current recording status remains in App Status.
+              Stop recording from Home to edit settings. Your current recording remains safe.
             </p>
           </div>
         </div>
       )}
 
-      <div className="flex shrink-0 items-center gap-4 border-b border-white/10 bg-(--surface-1) px-4 py-4 md:px-6">
+      <fieldset
+        disabled={isRecording}
+        className="m-0 flex min-h-0 flex-1 flex-col border-0 p-0"
+        aria-label="Recording settings"
+      >
+        <div className="flex shrink-0 items-center gap-4 border-b border-white/10 bg-(--surface-1) px-4 py-4 md:px-6">
         <div className="flex items-center gap-3">
           <div>
             <h1 className="inline-flex items-center gap-2 text-lg font-semibold text-neutral-100">
@@ -412,6 +417,7 @@ export function Settings() {
                   id={FIELD_IDS.captureSource}
                   value={formData.captureSource}
                   options={CAPTURE_SOURCE_OPTIONS}
+                  disabled={isRecording}
                   onChange={(nextValue) => {
                     setFormData({
                       ...formData,
@@ -437,7 +443,7 @@ export function Settings() {
                         value={formData.captureWindowHwnd}
                         options={captureWindowOptions}
                         placeholder="Select a window"
-                        disabled={isCaptureWindowSelectDisabled}
+                        disabled={isRecording || isCaptureWindowSelectDisabled}
                         onChange={(nextValue) => {
                           const selectedWindow = captureWindows.find((window) => window.hwnd === nextValue);
                           setFormData({
@@ -502,6 +508,7 @@ export function Settings() {
                   id={FIELD_IDS.videoQuality}
                   value={formData.videoQuality}
                   options={VIDEO_QUALITY_OPTIONS}
+                  disabled={isRecording}
                   onChange={(nextValue) => {
                     if (isVideoQuality(nextValue)) {
                       setFormData({ ...formData, videoQuality: nextValue });
@@ -520,6 +527,7 @@ export function Settings() {
                   id={FIELD_IDS.frameRate}
                   value={String(formData.frameRate)}
                   options={FRAME_RATE_OPTIONS}
+                  disabled={isRecording}
                   onChange={(nextValue) => {
                     const nextFrameRate = Number(nextValue);
                     if (isFrameRate(nextFrameRate)) {
@@ -538,7 +546,7 @@ export function Settings() {
                   id={FIELD_IDS.videoEncoderPreference}
                   value={formData.videoEncoderPreference}
                   options={videoEncoderOptions}
-                  disabled={isLoadingVideoEncoders}
+                  disabled={isRecording || isLoadingVideoEncoders}
                   onChange={(nextValue) => {
                     if (isVideoEncoderPreference(nextValue)) {
                       setFormData({ ...formData, videoEncoderPreference: nextValue });
@@ -700,6 +708,7 @@ export function Settings() {
                   id={FIELD_IDS.markerHotkey}
                   value={formData.markerHotkey}
                   options={MARKER_HOTKEY_OPTIONS}
+                  disabled={isRecording}
                   onChange={(nextValue) => {
                     if (isMarkerHotkey(nextValue)) {
                       setFormData({ ...formData, markerHotkey: nextValue });
@@ -751,24 +760,25 @@ export function Settings() {
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-white/10 bg-(--surface-1) px-4 py-4 md:px-6">
-        <div className="flex flex-wrap justify-end gap-3 pr-2">
-          <Button
-            variant="secondary"
-            onClick={handleCancel}
-            disabled={!hasChanges}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            onClick={handleSave}
-            disabled={!hasChanges}
-          >
-            Save Changes
-          </Button>
+        <div className="shrink-0 border-t border-white/10 bg-(--surface-1) px-4 py-4 md:px-6">
+          <div className="flex flex-wrap justify-end gap-3 pr-2">
+            <Button
+              variant="secondary"
+              onClick={handleCancel}
+              disabled={!hasChanges}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleSave}
+              disabled={!hasChanges}
+            >
+              Save Changes
+            </Button>
+          </div>
         </div>
-      </div>
+      </fieldset>
     </div>
   );
 }

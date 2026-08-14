@@ -1066,7 +1066,15 @@ export function WarcraftLogsUploadPage() {
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-400">
                     Upload Status
                   </p>
-                  <div className="h-2 overflow-hidden rounded-full bg-neutral-800">
+                  <div
+                    className="h-2 overflow-hidden rounded-full bg-neutral-800"
+                    role="progressbar"
+                    aria-label="WarcraftLogs upload progress"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.min(100, Math.max(progressPercent, 0))}
+                    aria-valuetext={`${progressPercent}% complete`}
+                  >
                     <div
                       className={`h-full rounded-full transition-all duration-300 ${progressBarTheme}`}
                       style={{ width: `${Math.min(100, Math.max(progressPercent, 0))}%` }}
@@ -1074,12 +1082,14 @@ export function WarcraftLogsUploadPage() {
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span className="text-neutral-300">{progressStatus ?? "Idle"}</span>
+                    <span className="text-neutral-300" role="status" aria-live="polite">
+                      {progressStatus ?? "Idle"}
+                    </span>
                     <span className="font-mono text-neutral-400">{progressPercent}%</span>
                   </div>
 
                   {errorMessage && (
-                    <p className="inline-flex items-center gap-1.5 rounded-sm border border-rose-300/30 bg-rose-500/12 px-2 py-1 text-xs text-rose-200">
+                    <p className="inline-flex items-center gap-1.5 rounded-sm border border-rose-300/30 bg-rose-500/12 px-2 py-1 text-xs text-rose-200" role="alert">
                       <XCircle className="h-3.5 w-3.5 text-rose-300" />
                       {errorMessage}
                     </p>

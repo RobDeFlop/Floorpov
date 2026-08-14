@@ -461,7 +461,7 @@ export function GameModePage({ gameMode }: GameModePageProps) {
                               {importantEvents.length}
                             </span>
                           </div>
-                          <span className="text-neutral-600">|</span>
+                          <span className="text-neutral-400">|</span>
                           <div className="flex items-baseline gap-1.5">
                             <span className="text-[10px] uppercase tracking-caps text-neutral-500">Total:</span>
                             <span className="rounded bg-white/10 px-2 py-0.5 text-xs font-medium text-neutral-300 border border-white/15">
@@ -524,8 +524,8 @@ export function GameModePage({ gameMode }: GameModePageProps) {
                               {importantEvents.length === 0 ? (
                                 <p className="text-xs text-neutral-500">No important events in metadata.</p>
                               ) : (
-                                <div className="overflow-hidden rounded-sm border border-white/10 bg-black/20">
-                                  <table className="min-w-full text-left text-xs text-neutral-300">
+                                <div className="overflow-x-auto rounded-sm border border-white/10 bg-black/20">
+                                  <table className="min-w-[40rem] text-left text-xs text-neutral-300">
                                     <thead className="bg-(--surface-2) text-neutral-400">
                                       <tr>
                                         <th className="px-2 py-1.5 font-medium">Time</th>

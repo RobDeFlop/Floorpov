@@ -1,5 +1,6 @@
 import { getVersion } from "@tauri-apps/api/app";
 import {
+  AlertTriangle,
   Bug,
   Circle,
   ExternalLink,
@@ -44,6 +45,7 @@ export function Sidebar({ onNavigate, currentView, isDebugMode }: SidebarProps) 
     isRecording,
     recordingDuration,
     appStatusDetail,
+    lastError,
     isSelectedWindowAlive,
     startRecording,
     stopRecording,
@@ -282,7 +284,7 @@ export function Sidebar({ onNavigate, currentView, isDebugMode }: SidebarProps) 
                     isRecording ? "text-rose-200" : idleTheme === "amber" ? "text-amber-300" : "text-emerald-300"
                   }`}
                 >
-                  App Status
+                  Recording
                 </div>
               </div>
               <div className="mt-1 h-4 overflow-hidden">
@@ -322,6 +324,18 @@ export function Sidebar({ onNavigate, currentView, isDebugMode }: SidebarProps) 
             </div>
           </div>
         </motion.button>
+
+        {lastError && (
+          <p
+            className="mt-2 rounded-sm border border-rose-300/30 bg-rose-500/10 px-2.5 py-2 text-xs leading-5 text-rose-200"
+            role="alert"
+          >
+            <span className="inline-flex items-start gap-1.5">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-300" aria-hidden="true" />
+              <span>Recording failed. Try again: {lastError}</span>
+            </span>
+          </p>
+        )}
 
         <a
           href={REPOSITORY_URL}

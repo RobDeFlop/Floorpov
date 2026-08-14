@@ -19,7 +19,7 @@ export function PlayerStatChart({ title, data, color }: PlayerStatChartProps) {
     return (
       <div>
         <p className="mb-2 text-xs font-medium text-neutral-400">{title}</p>
-        <p className="text-xs text-neutral-600">No data</p>
+        <p className="text-xs text-neutral-400">No data</p>
       </div>
     );
   }

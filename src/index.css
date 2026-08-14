@@ -68,7 +68,8 @@ input:disabled,
 }
 
 :focus-visible {
-  outline: none;
+  outline: 2px solid var(--color-emerald-300);
+  outline-offset: 2px;
 }
 
 * {

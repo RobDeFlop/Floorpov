@@ -1,6 +1,6 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { Clock3, Film, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRecording } from "../../contexts/RecordingContext";
 import { useSettings } from "../../contexts/SettingsContext";
 import { useVideo } from "../../contexts/VideoContext";
@@ -92,6 +92,7 @@ export function GameModeRecordingsBrowser({
   const [selectedDateRange, setSelectedDateRange] = useState<DateRangeFilter>("all");
   const [pendingDeleteRecording, setPendingDeleteRecording] = useState<RecordingInfo | null>(null);
   const [isDeletingRecording, setIsDeletingRecording] = useState(false);
+  const recordingsListRef = useRef<HTMLUListElement>(null);
 
   const copy = modeOverviewCopy[gameMode];
   const isActionLocked = isRecording || isVideoLoading || Boolean(activatingRecordingPath);
@@ -243,10 +244,11 @@ export function GameModeRecordingsBrowser({
         </div>
         <div className="grid gap-2 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]">
           <div className="min-w-0">
-            <label className="mb-1 block text-[10px] uppercase tracking-[0.09em] text-neutral-500">
+            <label htmlFor="gamemode-filter-search" className="mb-1 block text-[10px] uppercase tracking-[0.09em] text-neutral-400">
               Search
             </label>
               <Input
+                id="gamemode-filter-search"
                 type="text"
                 variant="filter"
                 value={searchQuery}
@@ -256,7 +258,7 @@ export function GameModeRecordingsBrowser({
             </div>
 
           <div>
-            <label className="mb-1 block text-[10px] uppercase tracking-[0.09em] text-neutral-500">
+            <label htmlFor="gamemode-filter-zone" className="mb-1 block text-[10px] uppercase tracking-[0.09em] text-neutral-400">
               {copy.zoneLabel}
             </label>
             <SettingsSelect
@@ -274,7 +276,7 @@ export function GameModeRecordingsBrowser({
           </div>
 
           <div>
-            <label className="mb-1 block text-[10px] uppercase tracking-[0.09em] text-neutral-500">
+            <label htmlFor="gamemode-filter-encounter" className="mb-1 block text-[10px] uppercase tracking-[0.09em] text-neutral-400">
               {copy.encounterLabel}
             </label>
             <SettingsSelect
@@ -292,7 +294,7 @@ export function GameModeRecordingsBrowser({
           </div>
 
           <div>
-            <label className="mb-1 block text-[10px] uppercase tracking-[0.09em] text-neutral-500">
+            <label htmlFor="gamemode-filter-date" className="mb-1 block text-[10px] uppercase tracking-[0.09em] text-neutral-400">
               Date
             </label>
             <SettingsSelect
@@ -312,53 +314,62 @@ export function GameModeRecordingsBrowser({
 
       {!settings.outputFolder ? (
         <p className="text-xs text-neutral-400">Select an output folder to browse recordings.</p>
-      ) : modeRecordings.length === 0 && !isLoading ? (
+      ) : isLoading ? (
+        <div className="flex items-center gap-2 py-6 text-sm text-neutral-300" role="status" aria-live="polite">
+          <LoaderCircle className="h-4 w-4 animate-spin text-emerald-300" aria-hidden="true" />
+          Loading recordings...
+        </div>
+      ) : modeRecordings.length === 0 ? (
         <p className="text-xs text-neutral-400">No {gameMode.replace("-", " ")} sessions found yet.</p>
       ) : filteredRecordings.length === 0 && !isLoading ? (
         <p className="text-xs text-neutral-400">No sessions match the current filters.</p>
       ) : (
-        <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+        <ul
+          ref={recordingsListRef}
+          tabIndex={-1}
+          className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1"
+        >
           {filteredRecordings.map((recording) => {
             const isActivating = activatingRecordingPath === recording.file_path;
             const displayTitle = getRecordingDisplayTitle(recording, gameMode);
 
             return (
               <li key={`${recording.file_path}-${recording.created_at}`}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleActivateRecording(recording);
-                  }}
-                  disabled={isActionLocked}
-                  className="w-full rounded-sm border border-white/15 bg-black/25 p-3 text-left transition-colors hover:border-emerald-300/45 hover:bg-emerald-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-neutral-100" title={displayTitle}>
-                        {displayTitle}
-                      </p>
-                      <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-neutral-400">
-                        <Clock3 className="h-3 w-3" />
-                        {`${formatDate(recording.created_at)} · ${formatBytes(recording.size_bytes)}`}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {isActivating && <LoaderCircle className="h-4 w-4 animate-spin text-emerald-200" />}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void handleDeleteRecording(recording);
-                        }}
-                        disabled={isActionLocked || isDeletingRecording}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-sm border border-white/10 bg-black/20 text-neutral-400 transition-colors hover:border-rose-300/35 hover:bg-rose-500/15 hover:text-rose-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/60 disabled:cursor-not-allowed disabled:opacity-50"
-                        title="Delete recording"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </button>
+                <div className="flex items-center gap-2 rounded-sm border border-white/15 bg-black/25 p-3 transition-colors hover:border-emerald-300/45 hover:bg-emerald-500/10">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleActivateRecording(recording);
+                    }}
+                    disabled={isActionLocked}
+                    className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <span className="flex items-start justify-between gap-2">
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-neutral-100" title={displayTitle}>
+                          {displayTitle}
+                        </span>
+                        <span className="mt-1 inline-flex items-center gap-1.5 text-xs text-neutral-400">
+                          <Clock3 className="h-3 w-3" aria-hidden="true" />
+                          {`${formatDate(recording.created_at)} · ${formatBytes(recording.size_bytes)}`}
+                        </span>
+                      </span>
+                      {isActivating && <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-emerald-200" aria-label="Loading recording" />}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleDeleteRecording(recording);
+                    }}
+                    disabled={isActionLocked || isDeletingRecording}
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-white/10 bg-black/20 text-neutral-400 transition-colors hover:border-rose-300/35 hover:bg-rose-500/15 hover:text-rose-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/60 disabled:cursor-not-allowed disabled:opacity-50"
+                    title="Delete recording"
+                    aria-label={`Delete recording ${displayTitle}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                </div>
               </li>
             );
           })}
@@ -367,6 +378,9 @@ export function GameModeRecordingsBrowser({
 
       {pendingDeleteRecording && (
         <DeleteConfirmDialog
+          titleId="gamemode-delete-recording-title"
+          descriptionId="gamemode-delete-recording-description"
+          fallbackFocusRef={recordingsListRef}
           title="Delete recording?"
           description={
             <>
