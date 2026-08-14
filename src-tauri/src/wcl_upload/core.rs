@@ -20,9 +20,8 @@ use crate::wcl_upload::constants::{
 };
 use crate::wcl_upload::error::UploadError;
 use crate::wcl_upload::events::{
-    emit_live_report_created, emit_live_upload_complete, emit_live_upload_error,
-    emit_live_upload_progress, emit_log_scan_progress, emit_upload_complete, emit_upload_error,
-    emit_upload_progress,
+    emit_live_report_created, emit_live_upload_complete, emit_log_scan_progress,
+    emit_upload_complete, emit_upload_error, emit_upload_progress,
 };
 use crate::wcl_upload::filesystem::{
     check_node_runtime, find_latest_combat_log_path, resolve_node_binary_path,
@@ -755,7 +754,7 @@ pub async fn start_wcl_upload(
         }
         Err(error) => {
             let message = error.to_string();
-            emit_upload_error(&app_handle, &message);
+            emit_upload_error(&app_handle, "wcl-upload-error", &message);
             Err(message)
         }
     }
@@ -879,7 +878,11 @@ pub fn start_wcl_live_upload(
                     active.is_running = false;
                 }
             }
-            emit_live_upload_error(&worker_handle_clone, &error.to_string());
+            emit_upload_error(
+                &worker_handle_clone,
+                "wcl-live-upload-error",
+                &error.to_string(),
+            );
             set_live_report_info(None, None, false);
         }
 
@@ -952,26 +955,46 @@ fn run_live_upload(
         .ok_or_else(|| UploadError::Message("Invalid combat log filename".to_string()))?
         .to_string();
 
-    emit_live_upload_progress(&app_handle, "live", "Starting live upload session...", 2);
+    emit_upload_progress(
+        &app_handle,
+        "wcl-live-upload-progress",
+        "live",
+        "Starting live upload session...",
+        2,
+    );
     check_cancelled(&cancel_flag)?;
 
     let node_binary_path = resolve_node_binary_path(&app_handle)?;
     check_node_runtime(&node_binary_path)?;
 
-    emit_live_upload_progress(
+    emit_upload_progress(
         &app_handle,
+        "wcl-live-upload-progress",
         "auth",
         "Authenticating with WarcraftLogs...",
         4,
     );
     if let Some(user_name) = user_name {
-        emit_live_upload_progress(&app_handle, "auth", &format!("Logged in as {user_name}"), 6);
+        emit_upload_progress(
+            &app_handle,
+            "wcl-live-upload-progress",
+            "auth",
+            &format!("Logged in as {user_name}"),
+            6,
+        );
     } else {
-        emit_live_upload_progress(&app_handle, "auth", "Authenticated with WarcraftLogs", 6);
+        emit_upload_progress(
+            &app_handle,
+            "wcl-live-upload-progress",
+            "auth",
+            "Authenticated with WarcraftLogs",
+            6,
+        );
     }
 
-    emit_live_upload_progress(
+    emit_upload_progress(
         &app_handle,
+        "wcl-live-upload-progress",
         "parser",
         "Fetching latest WarcraftLogs parser...",
         8,
@@ -1027,8 +1050,9 @@ fn run_live_upload(
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0);
-    emit_live_upload_progress(
+    emit_upload_progress(
         &app_handle,
+        "wcl-live-upload-progress",
         "report",
         "Creating WarcraftLogs live report...",
         10,
@@ -1045,8 +1069,9 @@ fn run_live_upload(
     })?;
     let report_url = format!("https://www.warcraftlogs.com/reports/{created_code}");
     runtime.report_code = Some(created_code.clone());
-    emit_live_upload_progress(
+    emit_upload_progress(
         &app_handle,
+        "wcl-live-upload-progress",
         "report",
         &format!("Live report created: {report_url}"),
         12,
@@ -1054,8 +1079,9 @@ fn run_live_upload(
     emit_live_report_created(&app_handle, &report_url, &created_code);
     set_live_report_info(Some(report_url), Some(created_code), true);
 
-    emit_live_upload_progress(
+    emit_upload_progress(
         &app_handle,
+        "wcl-live-upload-progress",
         "live",
         if runtime.include_existing_contents {
             "Live upload is active. Processing existing combat log contents..."
@@ -1086,8 +1112,9 @@ fn run_live_upload(
             && runtime.file_offset >= runtime.initial_file_length
         {
             runtime.reported_existing_contents = true;
-            emit_live_upload_progress(
+            emit_upload_progress(
                 &app_handle,
+                "wcl-live-upload-progress",
                 "live",
                 "Existing combat log contents processed. Waiting for new lines...",
                 30,
@@ -1142,11 +1169,18 @@ fn run_upload(
         .ok_or_else(|| UploadError::Message("Invalid combat log filename".to_string()))?
         .to_string();
 
-    emit_upload_progress(&app_handle, "read", "Reading combat log metadata...", 2);
+    emit_upload_progress(
+        &app_handle,
+        "wcl-upload-progress",
+        "read",
+        "Reading combat log metadata...",
+        2,
+    );
     check_cancelled(&cancel_flag)?;
     let total_lines = count_file_lines(&log_path, &cancel_flag)?;
     emit_upload_progress(
         &app_handle,
+        "wcl-upload-progress",
         "read",
         &format!("Combat log contains {total_lines} lines"),
         4,
@@ -1156,6 +1190,7 @@ fn run_upload(
     let node_binary_path = resolve_node_binary_path(&app_handle)?;
     emit_upload_progress(
         &app_handle,
+        "wcl-upload-progress",
         "parser",
         &format!(
             "Using bundled Node runtime at {}",
@@ -1170,19 +1205,33 @@ fn run_upload(
     check_cancelled(&cancel_flag)?;
     emit_upload_progress(
         &app_handle,
+        "wcl-upload-progress",
         "auth",
         "Authenticating with WarcraftLogs...",
         6,
     );
     if let Some(user_name) = user_name {
-        emit_upload_progress(&app_handle, "auth", &format!("Logged in as {user_name}"), 8);
+        emit_upload_progress(
+            &app_handle,
+            "wcl-upload-progress",
+            "auth",
+            &format!("Logged in as {user_name}"),
+            8,
+        );
     } else {
-        emit_upload_progress(&app_handle, "auth", "Authenticated with WarcraftLogs", 8);
+        emit_upload_progress(
+            &app_handle,
+            "wcl-upload-progress",
+            "auth",
+            "Authenticated with WarcraftLogs",
+            8,
+        );
     }
 
     check_cancelled(&cancel_flag)?;
     emit_upload_progress(
         &app_handle,
+        "wcl-upload-progress",
         "parser",
         "Fetching latest WarcraftLogs parser...",
         10,
@@ -1190,6 +1239,7 @@ fn run_upload(
     let parser_assets = session.fetch_parser_assets()?;
     emit_upload_progress(
         &app_handle,
+        "wcl-upload-progress",
         "parser",
         &format!("Loaded parser v{}", parser_assets.parser_version),
         12,
@@ -1199,6 +1249,7 @@ fn run_upload(
     let parser_harness_path = resolve_parser_harness_path(&app_handle)?;
     emit_upload_progress(
         &app_handle,
+        "wcl-upload-progress",
         "parser",
         &format!("Using parser harness at {}", parser_harness_path.display()),
         13,
@@ -1217,6 +1268,7 @@ fn run_upload(
 
     emit_upload_progress(
         &app_handle,
+        "wcl-upload-progress",
         "parser",
         "Parser ready. Beginning upload...",
         14,
@@ -1328,6 +1380,7 @@ fn run_upload(
             };
             emit_upload_progress(
                 &app_handle,
+                "wcl-upload-progress",
                 "upload",
                 &format!("Processed {processed_lines}/{total_lines} lines"),
                 progress_percent.min(96),
@@ -1344,6 +1397,7 @@ fn run_upload(
     check_cancelled(&cancel_flag)?;
     emit_upload_progress(
         &app_handle,
+        "wcl-upload-progress",
         "finalize",
         "Finalizing WarcraftLogs report...",
         98,
@@ -1351,7 +1405,13 @@ fn run_upload(
     session.terminate_report(&report_code)?;
 
     let report_url = format!("https://www.warcraftlogs.com/reports/{report_code}");
-    emit_upload_progress(&app_handle, "done", "Upload complete", 100);
+    emit_upload_progress(
+        &app_handle,
+        "wcl-upload-progress",
+        "done",
+        "Upload complete",
+        100,
+    );
 
     Ok(StartWclUploadResponse {
         report_url,
@@ -1390,6 +1450,7 @@ fn process_batch(
         parser.clear_fights()?;
         emit_upload_progress(
             app_handle,
+            "wcl-upload-progress",
             "parse",
             &format!("Batch {batch_number}/{total_batches}: no fights found yet"),
             20,
@@ -1399,7 +1460,13 @@ fn process_batch(
 
     if report_code.is_none() {
         check_cancelled(cancel_flag)?;
-        emit_upload_progress(app_handle, "report", "Creating WarcraftLogs report...", 21);
+        emit_upload_progress(
+            app_handle,
+            "wcl-upload-progress",
+            "report",
+            "Creating WarcraftLogs report...",
+            21,
+        );
 
         let created_code = session.create_report(&CreateReportRequest {
             file_name: file_name.to_string(),
@@ -1415,6 +1482,7 @@ fn process_batch(
         *report_code = Some(created_code.clone());
         emit_upload_progress(
             app_handle,
+            "wcl-upload-progress",
             "report",
             &format!("Created report {created_code}"),
             22,
@@ -1441,10 +1509,17 @@ fn process_batch(
     } else {
         format!("Master table unchanged for segment {segment_number}")
     };
-    emit_upload_progress(app_handle, "master", &master_message, 23);
+    emit_upload_progress(
+        app_handle,
+        "wcl-upload-progress",
+        "master",
+        &master_message,
+        23,
+    );
 
     emit_upload_progress(
         app_handle,
+        "wcl-upload-progress",
         "segment",
         &format!("Uploading segment {segment_number}..."),
         24,
@@ -1453,6 +1528,7 @@ fn process_batch(
 
     emit_upload_progress(
         app_handle,
+        "wcl-upload-progress",
         "upload",
         &format!("Batch {batch_number}/{total_batches}: uploaded {total_events} events"),
         24,
@@ -1481,8 +1557,9 @@ fn flush_live_buffer(
     fights_data.fights.retain(is_encounter_fight_candidate);
     let filtered_count = fights_data.fights.len();
     if filtered_count != original_count {
-        emit_live_upload_progress(
+        emit_upload_progress(
             app_handle,
+            "wcl-live-upload-progress",
             "live",
             &format!("Encounter filter kept {filtered_count}/{original_count} fights"),
             34,
@@ -1502,9 +1579,8 @@ fn flush_live_buffer(
             non_challenge_fights
         };
 
-        emit_live_upload_progress(
-            app_handle,
-            "live",
+        emit_upload_progress(
+            app_handle, "wcl-live-upload-progress",  "live",
             "Encounter markers missing in this flush. Applying safe fallback to keep upload moving.",
             34,
         );
@@ -1517,8 +1593,9 @@ fn flush_live_buffer(
         return Ok(());
     }
 
-    emit_live_upload_progress(
+    emit_upload_progress(
         app_handle,
+        "wcl-live-upload-progress",
         "live",
         &format!(
             "Live flush encounter fights: {} (pushFightIfNeeded={})",
@@ -1547,8 +1624,9 @@ fn flush_live_buffer(
     runtime.buffered_lines.clear();
     runtime.last_flush_at = Instant::now();
 
-    emit_live_upload_progress(
+    emit_upload_progress(
         app_handle,
+        "wcl-live-upload-progress",
         "live",
         &format!(
             "Uploaded live segment with {total_events} events. Total lines sent: {}",

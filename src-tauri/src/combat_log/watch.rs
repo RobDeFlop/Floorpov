@@ -2,7 +2,7 @@ use notify::{Event, EventKind, RecursiveMode, Watcher};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Instant, SystemTime};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
@@ -19,9 +19,8 @@ struct WatchState {
     metadata_accumulator: Arc<Mutex<RecordingMetadataAccumulator>>,
 }
 
-lazy_static::lazy_static! {
-    static ref WATCH_STATE: Arc<Mutex<Option<WatchState>>> = Arc::new(Mutex::new(None));
-}
+static WATCH_STATE: LazyLock<Arc<Mutex<Option<WatchState>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(None)));
 
 #[tauri::command]
 pub async fn start_combat_watch(
