@@ -40,11 +40,11 @@ export function VideoPlayer() {
   const { isRecording, recordingWarning } = useRecording();
 
   const inlineSurfaceHostRef = useRef<HTMLDivElement>(null);
-  const progressRef = useRef<HTMLDivElement>(null);
-  const volumeRef = useRef<HTMLDivElement>(null);
   const speedMenuRef = useRef<HTMLDivElement>(null);
   const immersiveSurfaceRef = useRef<HTMLDivElement>(null);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+  const [isSeeking, setIsSeeking] = useState(false);
+  const [seekValue, setSeekValue] = useState(0);
   const [volumeBeforeMute, setVolumeBeforeMute] = useState(1);
   const [isImmersiveMode, setIsImmersiveMode] = useState(false);
   const [inlineSurfaceRect, setInlineSurfaceRect] = useState({ left: 0, top: 0, width: 0, height: 0 });
@@ -53,6 +53,12 @@ export function VideoPlayer() {
   const [immersiveViewportSize, setImmersiveViewportSize] = useState({ width: 0, height: 0 });
 
   const showVideo = Boolean(videoSrc) && !isRecording;
+  const displayedSeekValue = Math.min(currentTime, Math.max(duration, 0));
+  const beginSeeking = () => {
+    setIsSeeking(true);
+    setSeekValue(displayedSeekValue);
+  };
+
   const toggleImmersiveMode = () => {
     setIsImmersiveMode((currentValue) => !currentValue);
   };
@@ -77,8 +83,6 @@ export function VideoPlayer() {
     }
   };
 
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
-  const volumeProgress = Math.max(0, Math.min(volume * 100, 100));
   const immersiveVideoStyle =
     isImmersiveMode &&
     videoNativeSize.width > 0 &&
@@ -173,6 +177,12 @@ export function VideoPlayer() {
       window.cancelAnimationFrame(syncFrame);
     };
   }, [isImmersiveMode, showVideo, syncIsPlaying, videoRef]);
+
+  useEffect(() => {
+    if (!isSeeking) {
+      setSeekValue(displayedSeekValue);
+    }
+  }, [displayedSeekValue, isSeeking]);
 
   useEffect(() => {
     if (!videoSrc) {
@@ -293,24 +303,6 @@ export function VideoPlayer() {
       window.removeEventListener("resize", updateViewportSize);
     };
   }, [isImmersiveMode, showVideo]);
-
-  const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!progressRef.current || duration === 0) return;
-    const rect = progressRef.current.getBoundingClientRect();
-    const clickPosition = (e.clientX - rect.left) / rect.width;
-    seek(clickPosition * duration);
-  };
-
-  const handleVolumeClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!volumeRef.current) {
-      return;
-    }
-
-    const rect = volumeRef.current.getBoundingClientRect();
-    const clickPosition = (e.clientX - rect.left) / rect.width;
-    const nextVolume = Math.max(0, Math.min(clickPosition, 1));
-    setVolume(nextVolume);
-  };
 
   const playerSurface = (
     <div
@@ -434,51 +426,16 @@ export function VideoPlayer() {
               </ControlIconButton>
 
               <div className="flex items-center gap-2">
-                <div
-                  ref={volumeRef}
-                  className="group relative h-2 w-20 cursor-pointer rounded-full border border-white/15 bg-neutral-700/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45"
-                  onClick={handleVolumeClick}
-                  onKeyDown={(event) => {
-                    if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
-                      event.preventDefault();
-                      setVolume(Math.max(0, volume - 0.05));
-                      return;
-                    }
-
-                    if (event.key === "ArrowRight" || event.key === "ArrowUp") {
-                      event.preventDefault();
-                      setVolume(Math.min(1, volume + 0.05));
-                      return;
-                    }
-
-                    if (event.key === "Home") {
-                      event.preventDefault();
-                      setVolume(0);
-                      return;
-                    }
-
-                    if (event.key === "End") {
-                      event.preventDefault();
-                      setVolume(1);
-                    }
-                  }}
-                  role="slider"
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={volume}
+                  onChange={(event) => setVolume(Number(event.target.value))}
                   aria-label="Volume"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(volumeProgress)}
-                  aria-valuetext={`${Math.round(volumeProgress)}%`}
-                  tabIndex={0}
-                >
-                  <div
-                    className="h-full rounded-full bg-emerald-400/85 transition-colors"
-                    style={{ width: `${volumeProgress}%` }}
-                  />
-                  <div
-                    className="pointer-events-none absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-emerald-100"
-                    style={{ left: `calc(${volumeProgress}% - 6px)` }}
-                  />
-                </div>
+                  className="h-2 w-20 accent-emerald-400"
+                />
               </div>
 
               <span className="text-xs font-mono text-white">
@@ -486,54 +443,27 @@ export function VideoPlayer() {
               </span>
             </div>
 
-            <div
-              ref={progressRef}
-              className="group relative h-2 w-full cursor-pointer rounded-full border border-white/15 bg-neutral-700/80 md:min-w-0 md:flex-1"
-              onClick={handleProgressClick}
-              onKeyDown={(event) => {
-                if (duration <= 0) {
-                  return;
-                }
-
-                if (event.key === "ArrowLeft") {
-                  event.preventDefault();
-                  seek(Math.max(0, currentTime - 5));
-                }
-
-                if (event.key === "ArrowRight") {
-                  event.preventDefault();
-                  seek(Math.min(duration, currentTime + 5));
-                  return;
-                }
-
-                if (event.key === "Home") {
-                  event.preventDefault();
-                  seek(0);
-                  return;
-                }
-
-                if (event.key === "End") {
-                  event.preventDefault();
-                  seek(duration);
-                }
+            <input
+              type="range"
+              min="0"
+              max={Math.max(duration, 0)}
+              step="0.01"
+              value={isSeeking ? seekValue : displayedSeekValue}
+              onChange={(event) => {
+                const nextValue = Number(event.target.value);
+                setSeekValue(nextValue);
+                seek(nextValue);
               }}
-              role="slider"
+              onPointerDown={beginSeeking}
+              onPointerUp={() => setIsSeeking(false)}
+              onPointerCancel={() => setIsSeeking(false)}
+              onFocus={beginSeeking}
+              onBlur={() => setIsSeeking(false)}
               aria-label="Timeline"
-              aria-valuemin={0}
-              aria-valuemax={Math.max(duration, 0)}
-              aria-valuenow={Math.max(currentTime, 0)}
-              aria-valuetext={`${formatTime(currentTime)} of ${formatTime(duration)}`}
-              tabIndex={0}
-            >
-              <div
-                className="h-full rounded-full bg-emerald-400/85 transition-colors"
-                style={{ width: `${progress}%` }}
-              />
-              <div
-                className="pointer-events-none absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-emerald-100 opacity-0 transition-opacity group-hover:opacity-100"
-                style={{ left: `calc(${progress}% - 6px)` }}
-              />
-            </div>
+              aria-valuetext={`${formatTime(isSeeking ? seekValue : currentTime)} of ${formatTime(duration)}`}
+              disabled={duration <= 0}
+              className="h-2 w-full accent-emerald-400 md:min-w-0 md:flex-1"
+            />
 
             <div className="flex items-center gap-2 md:shrink-0">
               <div ref={speedMenuRef} className="relative">
