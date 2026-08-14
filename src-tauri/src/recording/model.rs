@@ -143,12 +143,6 @@ pub struct RecordingState {
     pub(crate) stop_tx: Option<mpsc::Sender<()>>,
 }
 
-impl RecordingState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 pub type SharedRecordingState = Arc<RwLock<RecordingState>>;
 
 pub(crate) struct RecordingSessionConfig {

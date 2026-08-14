@@ -14,7 +14,7 @@ import {
   UploadCloud,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   WclActivityGroup,
   StartWclLiveUploadPayload,
@@ -355,28 +355,16 @@ export function WarcraftLogsUploadPage() {
     };
   }, [applyAuthStatus, email, isAuthStatusLoaded, refreshAuthStatus, useSavedLogin]);
 
-  const canStartUpload = useMemo(() => {
-    return (
-      !isUploading &&
-      !isLiveUploading &&
-      !isScanningActivities &&
-      !isAuthBusy &&
-      logFilePath.trim().length > 0 &&
-      hasAuthenticatedSession
-    );
-  }, [hasAuthenticatedSession, isAuthBusy, isLiveUploading, isScanningActivities, isUploading, logFilePath]);
-
-  const canLogin = useMemo(() => {
-    return !isUploading && !isLiveUploading && !isAuthBusy && hasLoginInput;
-  }, [hasLoginInput, isAuthBusy, isLiveUploading, isUploading]);
-
-  const canLoadGuilds = useMemo(() => {
-    return !isUploading && !isLiveUploading && !isAuthBusy && hasAuthenticatedSession;
-  }, [hasAuthenticatedSession, isAuthBusy, isLiveUploading, isUploading]);
-
-  const canStartLiveUpload = useMemo(() => {
-    return !isUploading && !isLiveUploading && !isAuthBusy && hasAuthenticatedSession;
-  }, [hasAuthenticatedSession, isAuthBusy, isLiveUploading, isUploading]);
+  const canStartUpload =
+    !isUploading &&
+    !isLiveUploading &&
+    !isScanningActivities &&
+    !isAuthBusy &&
+    logFilePath.trim().length > 0 &&
+    hasAuthenticatedSession;
+  const canLogin = !isUploading && !isLiveUploading && !isAuthBusy && hasLoginInput;
+  const canLoadGuilds = !isUploading && !isLiveUploading && !isAuthBusy && hasAuthenticatedSession;
+  const canStartLiveUpload = !isUploading && !isLiveUploading && !isAuthBusy && hasAuthenticatedSession;
 
   const progressBarTheme = errorMessage ? "bg-rose-400/90" : "bg-emerald-400/85";
 

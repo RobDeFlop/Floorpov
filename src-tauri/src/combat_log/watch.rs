@@ -3,14 +3,18 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::metadata::{persist_recording_metadata_snapshot, RecordingMetadataAccumulator};
 use super::parse::{extract_combat_trigger_event, extract_log_timestamp, LogTimestamp};
-use super::{CombatEvent, CombatTriggerEvent, CombatWatchStatusEvent, EVENT_MANUAL_MARKER};
+use super::{
+    build_combat_log_directory_path, find_latest_combat_log_in_directory,
+    find_latest_combat_log_path, is_combat_log_file_name, CombatEvent, CombatTriggerEvent,
+    CombatWatchStatusEvent, EVENT_MANUAL_MARKER,
+};
 
 struct WatchState {
     handle: Option<JoinHandle<()>>,
@@ -331,75 +335,6 @@ fn emit_combat_watch_status(
     if let Err(error) = app_handle.emit("combat-watch-status", status_event) {
         tracing::warn!(emit_error = %error, "Failed to emit combat watch status event");
     }
-}
-
-fn build_combat_log_directory_path(wow_folder: &str) -> PathBuf {
-    let candidate_path = Path::new(wow_folder);
-    let is_logs_directory = candidate_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(|value| value.eq_ignore_ascii_case("Logs"))
-        .unwrap_or(false);
-
-    if is_logs_directory {
-        candidate_path.to_path_buf()
-    } else {
-        candidate_path.join("Logs")
-    }
-}
-
-fn is_combat_log_file_name(file_name: &str) -> bool {
-    let lower_file_name = file_name.to_ascii_lowercase();
-    lower_file_name.starts_with("wowcombatlog") && lower_file_name.ends_with(".txt")
-}
-
-fn find_latest_combat_log_path(wow_folder: &str) -> Result<Option<PathBuf>, String> {
-    let logs_directory = build_combat_log_directory_path(wow_folder);
-    find_latest_combat_log_in_directory(&logs_directory)
-}
-
-fn find_latest_combat_log_in_directory(logs_directory: &Path) -> Result<Option<PathBuf>, String> {
-    let directory_entries = match std::fs::read_dir(logs_directory) {
-        Ok(entries) => entries,
-        Err(error) => {
-            if logs_directory.exists() {
-                return Err(error.to_string());
-            }
-            return Ok(None);
-        }
-    };
-
-    let mut latest_match: Option<(SystemTime, PathBuf)> = None;
-
-    for entry_result in directory_entries {
-        let entry = entry_result.map_err(|error| error.to_string())?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-
-        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if !is_combat_log_file_name(file_name) {
-            continue;
-        }
-
-        let modified_time = entry
-            .metadata()
-            .and_then(|metadata| metadata.modified())
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-
-        if latest_match
-            .as_ref()
-            .map(|(latest_time, _)| modified_time > *latest_time)
-            .unwrap_or(true)
-        {
-            latest_match = Some((modified_time, path));
-        }
-    }
-
-    Ok(latest_match.map(|(_, path)| path))
 }
 
 async fn watch_combat_log(

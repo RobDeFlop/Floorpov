@@ -5,11 +5,9 @@ interface MarkerContextType {
   events: GameEvent[];
   filteredEvents: GameEvent[];
   encounters: RecordingEncounterMetadata[];
-  hideNpcEvents: boolean;
   addEvent: (event: GameEvent) => void;
   setEvents: (events: GameEvent[]) => void;
   setEncounters: (encounters: RecordingEncounterMetadata[]) => void;
-  setHideNpcEvents: (hide: boolean) => void;
   clearEvents: () => void;
 }
 
@@ -47,12 +45,11 @@ function insertEventByTimestamp(sortedEvents: GameEvent[], nextEvent: GameEvent)
 export function MarkerProvider({ children }: { children: ReactNode }) {
   const [events, setEvents] = useState<GameEvent[]>([]);
   const [encounters, setEncounters] = useState<RecordingEncounterMetadata[]>([]);
-  const [hideNpcEvents, setHideNpcEvents] = useState(true);
 
-  const filteredEvents = useMemo(() => {
-    if (!hideNpcEvents) return events;
-    return events.filter((event) => !isNpcKind(event.targetKind, event.target));
-  }, [events, hideNpcEvents]);
+  const filteredEvents = useMemo(
+    () => events.filter((event) => !isNpcKind(event.targetKind, event.target)),
+    [events],
+  );
 
   const addEvent = useCallback((event: GameEvent) => {
     setEvents((previousEvents) => insertEventByTimestamp(previousEvents, event));
@@ -72,11 +69,9 @@ export function MarkerProvider({ children }: { children: ReactNode }) {
         events,
         filteredEvents,
         encounters,
-        hideNpcEvents,
         addEvent,
         setEvents: replaceEvents,
         setEncounters,
-        setHideNpcEvents,
         clearEvents,
       }}
     >

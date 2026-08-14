@@ -1,5 +1,8 @@
 use regex::Regex;
-use reqwest::blocking::{Client, RequestBuilder, Response};
+use reqwest::blocking::{
+    multipart::{Form, Part},
+    Client, RequestBuilder, Response,
+};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -13,6 +16,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 
+use crate::combat_log::find_latest_combat_log_path;
 use crate::wcl_upload::constants::{
     BASE_URL, BATCH_SIZE, CHROME_VERSION_FALLBACK, CLIENT_VERSION_FALLBACK,
     ELECTRON_VERSION_FALLBACK, LIVE_FLUSH_INTERVAL_MS, LIVE_MAX_READ_LINES_PER_POLL,
@@ -24,8 +28,7 @@ use crate::wcl_upload::events::{
     emit_upload_complete, emit_upload_error, emit_upload_progress,
 };
 use crate::wcl_upload::filesystem::{
-    check_node_runtime, find_latest_combat_log_path, resolve_node_binary_path,
-    resolve_parser_harness_path,
+    check_node_runtime, resolve_node_binary_path, resolve_parser_harness_path,
 };
 use crate::wcl_upload::parser::ParserBridge;
 use crate::wcl_upload::payload::{
@@ -49,60 +52,6 @@ use crate::wcl_upload::types::{
 };
 use crate::wcl_upload::upload_pipeline::UploadPipeline;
 use crate::wcl_upload::validation::{validate_live_request, validate_request};
-
-enum MultipartFieldValue {
-    Text(String),
-    File {
-        file_name: String,
-        content_type: String,
-        bytes: Vec<u8>,
-    },
-}
-
-struct MultipartBody {
-    boundary: String,
-    payload: Vec<u8>,
-}
-
-fn build_multipart_body(
-    fields: Vec<(String, MultipartFieldValue)>,
-    boundary: String,
-) -> MultipartBody {
-    let mut payload = Vec::<u8>::new();
-
-    for (name, value) in fields {
-        payload.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-        match value {
-            MultipartFieldValue::Text(text) => {
-                payload.extend_from_slice(
-                    format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n").as_bytes(),
-                );
-                payload.extend_from_slice(text.as_bytes());
-                payload.extend_from_slice(b"\r\n");
-            }
-            MultipartFieldValue::File {
-                file_name,
-                content_type,
-                bytes,
-            } => {
-                payload.extend_from_slice(
-                    format!(
-                        "Content-Disposition: form-data; name=\"{name}\"; filename=\"{file_name}\"\r\n"
-                    )
-                    .as_bytes(),
-                );
-                payload
-                    .extend_from_slice(format!("Content-Type: {content_type}\r\n\r\n").as_bytes());
-                payload.extend_from_slice(&bytes);
-                payload.extend_from_slice(b"\r\n");
-            }
-        }
-    }
-
-    payload.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
-
-    MultipartBody { boundary, payload }
-}
 
 pub async fn scan_wcl_log(
     app_handle: AppHandle,
@@ -367,14 +316,6 @@ fn validate_scan_fingerprint(scan: &WclScanSession, requested_path: &str) -> Res
     Ok(())
 }
 
-fn random_multipart_boundary() -> String {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    format!("----WebKitFormBoundary{nonce:x}")
-}
-
 #[derive(Clone)]
 pub(crate) struct WclSession {
     client: Client,
@@ -609,39 +550,24 @@ impl WclSession {
     ) -> Result<(), UploadError> {
         let endpoint = format!("{BASE_URL}/desktop-client/set-report-master-table/{report_code}");
 
-        let body = build_multipart_body(
-            vec![
-                (
-                    "segmentId".to_string(),
-                    MultipartFieldValue::Text(segment_id.to_string()),
-                ),
-                (
-                    "isRealTime".to_string(),
-                    MultipartFieldValue::Text("false".to_string()),
-                ),
-                (
-                    "logfile".to_string(),
-                    MultipartFieldValue::File {
-                        file_name: "blob".to_string(),
-                        content_type: "application/zip".to_string(),
-                        bytes: zip_bytes.clone(),
-                    },
-                ),
-            ],
-            random_multipart_boundary(),
-        );
-
         self.request_with_retry(
             "POST /desktop-client/set-report-master-table/{reportCode}",
             || {
                 self.client
                     .post(&endpoint)
                     .header("User-Agent", &self.user_agent)
-                    .header(
-                        "Content-Type",
-                        format!("multipart/form-data; boundary={}", body.boundary),
+                    .multipart(
+                        Form::new()
+                            .text("segmentId", segment_id.to_string())
+                            .text("isRealTime", "false")
+                            .part(
+                                "logfile",
+                                Part::bytes(zip_bytes.clone())
+                                    .file_name("blob")
+                                    .mime_str("application/zip")
+                                    .expect("application/zip is a valid MIME type"),
+                            ),
                     )
-                    .body(body.payload.clone())
             },
         )?;
 
@@ -667,35 +593,21 @@ impl WclSession {
         })
         .to_string();
 
-        let body = build_multipart_body(
-            vec![
-                (
-                    "parameters".to_string(),
-                    MultipartFieldValue::Text(parameters.clone()),
-                ),
-                (
-                    "logfile".to_string(),
-                    MultipartFieldValue::File {
-                        file_name: "blob".to_string(),
-                        content_type: "application/zip".to_string(),
-                        bytes: request.zip_bytes.clone(),
-                    },
-                ),
-            ],
-            random_multipart_boundary(),
-        );
-
         let response = self.request_with_retry(
             "POST /desktop-client/add-report-segment/{reportCode}",
             || {
                 self.client
                     .post(&endpoint)
                     .header("User-Agent", &self.user_agent)
-                    .header(
-                        "Content-Type",
-                        format!("multipart/form-data; boundary={}", body.boundary),
+                    .multipart(
+                        Form::new().text("parameters", parameters.clone()).part(
+                            "logfile",
+                            Part::bytes(request.zip_bytes.clone())
+                                .file_name("blob")
+                                .mime_str("application/zip")
+                                .expect("application/zip is a valid MIME type"),
+                        ),
                     )
-                    .body(body.payload.clone())
             },
         )?;
 

@@ -22,7 +22,11 @@ import { SidebarDividerBlock } from "./sidebar/SidebarDividerBlock";
 import { SidebarNavButton } from "./sidebar/SidebarNavButton";
 import { SidebarSectionLabel } from "./sidebar/SidebarSectionLabel";
 
-const gameModes = ["Mythic+", "Raid", "PvP"];
+const gameModes = [
+  { label: "Mythic+", view: "mythic-plus", icon: Swords },
+  { label: "Raid", view: "raid", icon: Shield },
+  { label: "PvP", view: "pvp", icon: Trophy },
+] as const;
 const REPOSITORY_URL = "https://github.com/RobDeFlop/FloorPoV";
 
 interface SidebarProps {
@@ -174,51 +178,17 @@ export function Sidebar({ onNavigate, currentView, isDebugMode }: SidebarProps) 
         <SidebarDividerBlock>
           <SidebarSectionLabel label="Game Mode" />
           <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-1">
-              {gameModes.map((mode) => {
-              const isActive = 
-                (mode === "Mythic+" && currentView === "mythic-plus") ||
-                (mode === "Raid" && currentView === "raid") ||
-                (mode === "PvP" && currentView === "pvp");
-             
-             const getGameModeIcon = () => {
-               switch (mode) {
-                 case "Mythic+":
-                   return Swords;
-                 case "Raid":
-                   return Shield;
-                 case "PvP":
-                   return Trophy;
-                 default:
-                   return () => null;
-               }
-             };
-             
-             const navigateTo = () => {
-               switch (mode) {
-                 case "Mythic+":
-                   onNavigate("mythic-plus");
-                   break;
-                 case "Raid":
-                   onNavigate("raid");
-                   break;
-                 case "PvP":
-                   onNavigate("pvp");
-                   break;
-               }
-             };
-             
-              return (
-                <SidebarNavButton
-                  key={mode}
-                  label={mode}
-                  icon={getGameModeIcon()}
-                  isActive={isActive}
-                  activeClassName="border-emerald-300/30 bg-emerald-500/15 text-emerald-100"
-                  defaultClassName="border-transparent text-neutral-300 hover:border-white/20 hover:bg-white/5 hover:text-neutral-100"
-                  onClick={navigateTo}
-                />
-              );
-            })}
+            {gameModes.map(({ label, view, icon: Icon }) => (
+              <SidebarNavButton
+                key={view}
+                label={label}
+                icon={Icon}
+                isActive={currentView === view}
+                activeClassName="border-emerald-300/30 bg-emerald-500/15 text-emerald-100"
+                defaultClassName="border-transparent text-neutral-300 hover:border-white/20 hover:bg-white/5 hover:text-neutral-100"
+                onClick={() => onNavigate(view)}
+              />
+            ))}
           </div>
         </SidebarDividerBlock>
 

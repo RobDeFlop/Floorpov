@@ -10,8 +10,6 @@ interface VideoContextType {
   volume: number;
   playbackRate: number;
   videoSrc: string | null;
-  play: () => void;
-  pause: () => void;
   togglePlay: () => void;
   seek: (time: number) => void;
   setVolume: (volume: number) => void;
@@ -37,14 +35,6 @@ export function VideoProvider({ children }: { children: ReactNode }) {
   const [volume, setVolumeState] = useState(1);
   const [playbackRate, setPlaybackRateState] = useState(1);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
-
-  const play = useCallback(() => {
-    videoRef.current?.play();
-  }, []);
-
-  const pause = useCallback(() => {
-    videoRef.current?.pause();
-  }, []);
 
   const togglePlay = useCallback(() => {
     if (!videoRef.current) return;
@@ -165,8 +155,6 @@ export function VideoProvider({ children }: { children: ReactNode }) {
         volume,
         playbackRate,
         videoSrc,
-        play,
-        pause,
         togglePlay,
         seek,
         setVolume,

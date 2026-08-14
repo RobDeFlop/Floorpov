@@ -7,7 +7,6 @@ interface SettingsContextType {
   settings: RecordingSettings;
   isLoading: boolean;
   updateSettings: (newSettings: RecordingSettings) => Promise<void>;
-  resetToDefaults: () => void;
 }
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
@@ -140,25 +139,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const resetToDefaults = useCallback(async () => {
-    if (!store) return;
-    
-    try {
-      await store.set('recording-settings', DEFAULT_SETTINGS);
-      await store.save();
-      setSettings(DEFAULT_SETTINGS);
-      
-      if (settings.markerHotkey !== 'none') {
-        await invoke('unregister_marker_hotkey');
-      }
-    } catch (error) {
-      console.error('Failed to reset settings:', error);
-      throw error;
-    }
-  }, [store, settings.markerHotkey]);
-
   return (
-    <SettingsContext.Provider value={{ settings, isLoading, updateSettings, resetToDefaults }}>
+    <SettingsContext.Provider value={{ settings, isLoading, updateSettings }}>
       {children}
     </SettingsContext.Provider>
   );

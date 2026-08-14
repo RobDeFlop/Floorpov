@@ -7,11 +7,7 @@
   --surface-0: rgba(10, 10, 11, 0.88);
   --surface-1: rgba(14, 14, 16, 0.9);
   --surface-2: rgba(20, 20, 22, 0.92);
-  --surface-3: rgba(28, 28, 31, 0.95);
-  --surface-border: rgba(255, 255, 255, 0.12);
-  --surface-border-strong: rgba(255, 255, 255, 0.22);
   --surface-glow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 10px 24px rgba(0, 0, 0, 0.45);
-  --focus-ring: 0 0 0 2px rgba(255, 255, 255, 0.35);
   
   /* Color standardization */
   --color-emerald-500: rgb(16, 185, 129);
@@ -116,71 +112,8 @@ select:-webkit-autofill:focus {
   transition: background-color 9999s ease-in-out 0s;
 }
 
-/* Typography Utilities */
 @layer utilities {
-  /* Label variants for small uppercase text */
-  .label-tiny {
-    @apply text-[10px] uppercase;
-    letter-spacing: 0.09em;
-  }
-  
-  .label-xs {
-    @apply text-[11px] uppercase;
-    letter-spacing: 0.12em;
-  }
-  
-  .label-sm {
-    @apply text-xs uppercase;
-    letter-spacing: 0.12em;
-  }
-  
-  /* Heading variants */
-  .heading-page {
-    @apply text-lg font-semibold;
-  }
-  
-  .heading-section {
-    @apply text-sm font-semibold uppercase;
-    letter-spacing: 0.13em;
-  }
-  
-  .heading-subsection {
-    @apply text-xs font-semibold uppercase;
-    letter-spacing: 0.1em;
-  }
-  
-  /* Body text variants */
-  .body-sm {
-    @apply text-xs;
-  }
-  
-  .body-base {
-    @apply text-sm;
-  }
-  
-  /* Monospace utilities */
-  .mono-xs {
-    @apply text-xs font-mono;
-  }
-  
-  .mono-sm {
-    @apply text-sm font-mono;
-  }
-  
-  /* Standardized letter-spacing utilities */
-  .tracking-tight-caps {
-    letter-spacing: 0.08em;
-  }
-  
   .tracking-caps {
     letter-spacing: 0.12em;
-  }
-  
-  .tracking-wide-caps {
-    letter-spacing: 0.16em;
-  }
-  
-  .tracking-extrawide-caps {
-    letter-spacing: 0.18em;
   }
 }
