@@ -10,14 +10,9 @@ export function TitleBar() {
 
   const handleMaximize = async () => {
     try {
-      const isMaximized = await appWindow.isMaximized();
-      if (isMaximized) {
-        await appWindow.unmaximize();
-      } else {
-        await appWindow.maximize();
-      }
-    } catch (e) {
-      console.error('Maximize error:', e);
+      await appWindow.toggleMaximize();
+    } catch (error) {
+      console.error("Maximize error:", error);
     }
   };
 

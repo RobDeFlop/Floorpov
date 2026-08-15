@@ -26,6 +26,7 @@
         "minWidth": 800,
         "minHeight": 500,
         "decorations": false,
+        "shadow": false,
         "transparent": false,
         "resizable": true,
         "maximizable": true,

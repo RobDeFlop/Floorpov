@@ -1,5 +1,6 @@
 mod combat_log;
 mod hotkey;
+mod playback_window;
 mod recording;
 mod settings;
 mod wcl_upload;
@@ -36,6 +37,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(recording_state)
+        .manage(playback_window::PlaybackWindowState::default())
         .manage(wcl_upload::WclAuthService::new())
         .setup(|app| {
             let main_window = app
@@ -89,6 +91,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             is_debug_build,
+            playback_window::enter_playback_fullscreen,
+            playback_window::exit_playback_fullscreen,
             recording::start_recording,
             recording::stop_recording,
             recording::list_capture_windows,
