@@ -218,7 +218,7 @@ function LayoutContent() {
         </div>
       )}
       <TitleBar />
-      <div className="flex flex-1 min-h-0 flex-col gap-2 p-2 md:flex-row md:gap-3 md:p-3">
+      <div className="flex flex-1 min-h-0 flex-col gap-2 overflow-hidden p-2 md:flex-row md:gap-3 md:p-3">
         <Sidebar
           onNavigate={handleNavigate}
           currentView={currentView}
