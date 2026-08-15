@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   AlertTriangle,
   AppWindow,
   CheckCircle2,
+  ChevronDown,
   HardDrive,
   Keyboard,
   Monitor,
   RefreshCw,
   Settings2,
+  Swords,
   Video,
   Volume2,
   XCircle,
@@ -36,10 +39,12 @@ import {
 import { ReadOnlyPathField } from "./ReadOnlyPathField";
 import { SettingsSection } from "./SettingsSection";
 import { SettingsSelect, type SettingsSelectOption } from "./SettingsSelect";
+import { useModalFocus } from "../../hooks/useModalFocus";
 import { SettingsToggleField } from "./SettingsToggleField";
 import { shallowEqual } from "../../utils/comparison";
 import { formatBytes } from "../../utils/format";
 import { AvailableVideoEncoder, CaptureWindowInfo } from "../../types/recording";
+import { type AppView } from "../../types/ui";
 
 const VIDEO_QUALITY_OPTIONS: SettingsSelectOption[] = Object.entries(QUALITY_SETTINGS).map(
   ([key, { label }]) => ({ value: key, label }),
@@ -111,13 +116,74 @@ function isMarkerHotkey(value: string): value is MarkerHotkey {
   return HOTKEY_OPTIONS.some((option) => option.value === value);
 }
 
-export function Settings() {
+interface SettingsGroupProps {
+  contentId: string;
+  description: string;
+  icon: ReactNode;
+  defaultOpen?: boolean;
+  title: string;
+  children: ReactNode;
+}
+
+function SettingsGroup({
+  contentId,
+  description,
+  icon,
+  defaultOpen = false,
+  title,
+  children,
+}: SettingsGroupProps) {
+  return (
+    <details
+      {...(defaultOpen ? { open: true } : {})}
+      className="group overflow-hidden rounded-sm border border-white/10 bg-(--surface-1)/80"
+    >
+      <summary
+        aria-controls={contentId}
+        className="flex min-h-14 cursor-pointer list-none items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-300/60 [&::-webkit-details-marker]:hidden"
+      >
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-white/5 text-neutral-300">
+          {icon}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold text-neutral-100">{title}</span>
+          <span className="mt-0.5 block text-xs text-neutral-500">{description}</span>
+        </span>
+        <ChevronDown
+          className="h-4 w-4 shrink-0 text-neutral-500 transition-transform duration-150 motion-reduce:transition-none group-open:rotate-180"
+          aria-hidden="true"
+        />
+      </summary>
+      <div id={contentId} className="space-y-6 border-t border-white/10 px-4 pb-4 pt-4">
+        {children}
+      </div>
+    </details>
+  );
+}
+
+interface SettingsProps {
+  navigationRequest: AppView | null;
+  onDirtyChange: (hasChanges: boolean) => void;
+  onNavigationHandled: () => void;
+  onNavigateWithoutGuard: (view: AppView) => void;
+}
+
+export function Settings({
+  navigationRequest,
+  onDirtyChange,
+  onNavigationHandled,
+  onNavigateWithoutGuard,
+}: SettingsProps) {
   const { settings, updateSettings } = useSettings();
   const { isRecording, isSelectedWindowAlive } = useRecording();
   const [formData, setFormData] = useState<RecordingSettings>(settings);
   const [folderSize, setFolderSize] = useState<number>(0);
   const [isWowFolderValid, setIsWowFolderValid] = useState<boolean>(false);
   const [hasChanges, setHasChanges] = useState(false);
+  const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState(false);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+  const leaveDialogRef = useRef<HTMLDivElement>(null);
+  const cancelLeaveButtonRef = useRef<HTMLButtonElement>(null);
   const [captureWindows, setCaptureWindows] = useState<CaptureWindowInfo[]>([]);
   const [isLoadingCaptureWindows, setIsLoadingCaptureWindows] = useState(false);
   const [captureWindowsError, setCaptureWindowsError] = useState<string | null>(null);
@@ -174,6 +240,23 @@ export function Settings() {
   useEffect(() => {
     setHasChanges(!shallowEqual(formData, settings));
   }, [formData, settings]);
+
+  useEffect(() => {
+    onDirtyChange(hasChanges);
+  }, [hasChanges, onDirtyChange]);
+
+  useEffect(() => {
+    if (!navigationRequest) {
+      return;
+    }
+
+    if (hasChanges) {
+      setIsLeaveDialogOpen(true);
+      return;
+    }
+
+    onNavigateWithoutGuard(navigationRequest);
+  }, [hasChanges, navigationRequest, onNavigateWithoutGuard]);
 
   const loadCaptureWindows = useCallback(async () => {
     setIsLoadingCaptureWindows(true);
@@ -280,16 +363,18 @@ export function Settings() {
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async (): Promise<boolean> => {
     if (!isStorageLimitWithinBounds(formData.maxStorageGB)) {
-      return;
+      return false;
     }
 
     try {
       await updateSettings(formData);
       setHasChanges(false);
+      return true;
     } catch (error) {
       // Error already logged in context
+      return false;
     }
   };
 
@@ -297,6 +382,37 @@ export function Settings() {
     setFormData(settings);
     setHasChanges(false);
   };
+
+  const handleCancelNavigation = () => {
+    setIsLeaveDialogOpen(false);
+    onNavigationHandled();
+  };
+
+  const handleDiscardAndLeave = () => {
+    if (!navigationRequest) {
+      return;
+    }
+
+    handleCancel();
+    setIsLeaveDialogOpen(false);
+    onNavigateWithoutGuard(navigationRequest);
+  };
+
+  const handleSaveAndLeave = async () => {
+    if (!navigationRequest || !(await handleSave())) {
+      return;
+    }
+
+    setIsLeaveDialogOpen(false);
+    onNavigateWithoutGuard(navigationRequest);
+  };
+
+  useModalFocus({
+    isOpen: isLeaveDialogOpen,
+    dialogRef: leaveDialogRef,
+    initialFocusRef: cancelLeaveButtonRef,
+    onEscape: handleCancelNavigation,
+  });
 
   const handleBrowseWowFolder = async () => {
     try {
@@ -370,9 +486,9 @@ export function Settings() {
   return (
     <div className="relative flex flex-1 min-h-0 flex-col overflow-hidden bg-(--surface-0)">
       {isRecording && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm">
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
           <div
-            className="max-w-md rounded-sm border border-rose-300/25 bg-(--surface-2) p-8 text-center shadow-(--surface-glow)"
+            className="max-w-md rounded-sm border border-amber-300/30 bg-(--surface-2) p-8 text-center shadow-(--surface-glow)"
             role="status"
             aria-live="polite"
           >
@@ -392,21 +508,40 @@ export function Settings() {
         className="m-0 flex min-h-0 flex-1 flex-col border-0 p-0"
         aria-label="Recording settings"
       >
-        <div className="flex shrink-0 items-center gap-4 border-b border-white/10 bg-(--surface-1) px-4 py-4 md:px-6">
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 flex-wrap items-center gap-4 border-b border-white/10 bg-(--surface-1) px-4 py-4 md:px-6">
           <div>
             <h1 className="inline-flex items-center gap-2 text-lg font-semibold text-neutral-100">
-              <Settings2 className="h-4 w-4 text-neutral-300" />
+              <Settings2 className="h-4 w-4 text-neutral-300" aria-hidden="true" />
               Settings
             </h1>
-            <p className="text-xs uppercase tracking-[0.12em] text-neutral-500">Set up capture, quality, and automation</p>
+            <p className="mt-1 text-sm text-neutral-400">Configure capture before the next pull.</p>
           </div>
+          {(isRecording || hasChanges) && (
+            <div
+              className="ml-auto inline-flex items-center gap-2 rounded-sm border border-amber-300/30 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-200"
+              role="status"
+              aria-live="polite"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-300" aria-hidden="true" />
+              {isRecording ? "Settings locked while recording" : "Unsaved changes"}
+            </div>
+          )}
         </div>
-      </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-6 pb-10 [scrollbar-gutter:stable] md:px-6">
-        <div className="w-full space-y-4">
-          <SettingsSection title="Capture" icon={<Monitor className="h-4 w-4" />}>
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-6 pb-10 [scrollbar-gutter:stable] md:px-6">
+          <div className="w-full space-y-4">
+            <SettingsGroup
+              contentId="settings-group-recording"
+              description="What FloorPoV captures and how it sounds"
+              icon={<Monitor className="h-4 w-4" aria-hidden="true" />}
+              defaultOpen
+              title="Recording"
+            >
+              <SettingsSection
+                title="Capture"
+                icon={<Monitor className="h-4 w-4" aria-hidden="true" />}
+                className="rounded-none border-0 bg-transparent p-0"
+              >
             <div className="space-y-4">
               <div>
                 <label htmlFor={FIELD_IDS.captureSource} className="mb-2 inline-flex items-center gap-1.5 text-sm text-neutral-300">
@@ -500,7 +635,11 @@ export function Settings() {
             </div>
           </SettingsSection>
 
-          <SettingsSection title="Video" icon={<Video className="h-4 w-4" />}>
+              <SettingsSection
+                title="Video & Audio"
+                icon={<Video className="h-4 w-4" aria-hidden="true" />}
+                className="rounded-none border-0 bg-transparent p-0"
+              >
             <div className="grid gap-4 md:grid-cols-2">
               <div>
                 <label htmlFor={FIELD_IDS.videoQuality} className="mb-2 block text-sm text-neutral-300">Quality Preset</label>
@@ -538,39 +677,14 @@ export function Settings() {
                 <p className="mt-1 text-xs text-neutral-400">Sets your target capture FPS.</p>
               </div>
 
-              <div>
-                <label htmlFor={FIELD_IDS.videoEncoderPreference} className="mb-2 block text-sm text-neutral-300">
-                  Video Encoder
-                </label>
-                <SettingsSelect
-                  id={FIELD_IDS.videoEncoderPreference}
-                  value={formData.videoEncoderPreference}
-                  options={videoEncoderOptions}
-                  disabled={isRecording || isLoadingVideoEncoders}
-                  onChange={(nextValue) => {
-                    if (isVideoEncoderPreference(nextValue)) {
-                      setFormData({ ...formData, videoEncoderPreference: nextValue });
-                    }
-                  }}
-                  ariaDescribedBy="settings-video-encoder-help"
-                />
-                <p id="settings-video-encoder-help" className="mt-1 text-xs text-neutral-400">
-                  Auto picks the best available encoder. Hardware encoders usually reduce in-game stutter.
-                </p>
-                <p className="mt-1 text-xs text-neutral-400">
-                  Quality controls file size; encoder choice controls performance impact.
-                </p>
-                {videoEncodersError && (
-                  <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-amber-200">
-                    <AlertTriangle className="h-3.5 w-3.5" />
-                    {videoEncodersError}
-                  </p>
-                )}
-              </div>
             </div>
           </SettingsSection>
 
-          <SettingsSection title="Audio" icon={<Volume2 className="h-4 w-4" />}>
+          <div className="mt-5 border-t border-white/10 pt-4">
+            <div className="mb-3 flex items-center gap-2 text-sm font-medium text-neutral-200">
+              <Volume2 className="h-4 w-4 text-neutral-400" aria-hidden="true" />
+              Audio
+            </div>
             <div className="space-y-4">
               <p className="text-sm text-neutral-400">Include game and desktop audio in your recordings.</p>
 
@@ -586,9 +700,20 @@ export function Settings() {
                 label="Enable System Audio"
               />
             </div>
-          </SettingsSection>
+          </div>
+            </SettingsGroup>
 
-          <SettingsSection title="Output" icon={<HardDrive className="h-4 w-4" />}>
+            <SettingsGroup
+              contentId="settings-group-storage"
+              description="Where recordings go and when they are cleaned up"
+              icon={<HardDrive className="h-4 w-4" aria-hidden="true" />}
+              title="Storage"
+            >
+              <SettingsSection
+                title="Output"
+                icon={<HardDrive className="h-4 w-4" aria-hidden="true" />}
+                className="rounded-none border-0 bg-transparent p-0"
+              >
             <div className="space-y-4">
               <div>
                 <ReadOnlyPathField
@@ -628,9 +753,20 @@ export function Settings() {
                 />
               </FormField>
             </div>
-          </SettingsSection>
+              </SettingsSection>
+            </SettingsGroup>
 
-          <SettingsSection title="Automation & Combat Log" icon={<CheckCircle2 className="h-4 w-4" />}>
+            <SettingsGroup
+              contentId="settings-group-wow"
+              description="WoW combat detection and automatic recording"
+              icon={<Swords className="h-4 w-4" aria-hidden="true" />}
+              title="WoW Integration"
+            >
+              <SettingsSection
+                title="Automation"
+                icon={<CheckCircle2 className="h-4 w-4" aria-hidden="true" />}
+                className="rounded-none border-0 bg-transparent p-0"
+              >
             <div className="space-y-4">
               <SettingsToggleField
                 id={FIELD_IDS.enableAutoRecording}
@@ -672,35 +808,53 @@ export function Settings() {
                 />
               </FormField>
 
-              <div>
-                <ReadOnlyPathField
-                  inputId={FIELD_IDS.wowFolder}
-                  label="WoW Folder"
-                  value={formData.wowFolder}
-                  onBrowse={handleBrowseWowFolder}
-                />
-                <p className="mt-2 text-xs text-neutral-400">
-                  Select your WoW client folder. FloorPoV reads{" "}
-                  <span className="font-mono">Logs\WoWCombatLog*.txt</span> (for example{" "}
-                  <span className="font-mono">WoWCombatLog-021726_124240.txt</span>).
-                </p>
-                {formData.wowFolder && isWowFolderValid && (
-                  <p className="mt-2 inline-flex items-center gap-1.5 rounded-sm border border-emerald-300/30 bg-emerald-500/12 px-2 py-1 text-xs text-emerald-100">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
-                    Combat log found!
-                  </p>
-                )}
-                {formData.wowFolder && !isWowFolderValid && (
-                  <p className="mt-2 inline-flex items-center gap-1.5 rounded-sm border border-rose-300/30 bg-rose-500/12 px-2 py-1 text-xs text-rose-200">
-                    <XCircle className="h-3.5 w-3.5 text-rose-300" />
-                    Could not find any logs in this folder.
-                  </p>
-                )}
-              </div>
             </div>
           </SettingsSection>
 
-          <SettingsSection title="Hotkeys" icon={<Keyboard className="h-4 w-4" />}>
+              <SettingsSection
+                title="WoW & Combat Log"
+                icon={<Swords className="h-4 w-4" aria-hidden="true" />}
+                className="rounded-none border-0 bg-transparent p-0"
+              >
+            <div>
+              <ReadOnlyPathField
+                inputId={FIELD_IDS.wowFolder}
+                label="WoW Folder"
+                value={formData.wowFolder}
+                onBrowse={handleBrowseWowFolder}
+              />
+              <p className="mt-2 text-xs text-neutral-400">
+                Select your WoW client folder. FloorPoV reads{" "}
+                <span className="font-mono">Logs\WoWCombatLog*.txt</span> (for example{" "}
+                <span className="font-mono">WoWCombatLog-021726_124240.txt</span>).
+              </p>
+              {formData.wowFolder && isWowFolderValid && (
+                <p className="mt-2 inline-flex items-center gap-1.5 rounded-sm border border-emerald-300/30 bg-emerald-500/12 px-2 py-1 text-xs text-emerald-100">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" aria-hidden="true" />
+                  Combat log found!
+                </p>
+              )}
+              {formData.wowFolder && !isWowFolderValid && (
+                <p className="mt-2 inline-flex items-center gap-1.5 rounded-sm border border-rose-300/30 bg-rose-500/12 px-2 py-1 text-xs text-rose-200">
+                  <XCircle className="h-3.5 w-3.5 text-rose-300" aria-hidden="true" />
+                  Could not find any logs in this folder.
+                </p>
+              )}
+            </div>
+              </SettingsSection>
+            </SettingsGroup>
+
+            <SettingsGroup
+              contentId="settings-group-controls"
+              description="Keyboard controls used during recording"
+              icon={<Keyboard className="h-4 w-4" aria-hidden="true" />}
+              title="Controls"
+            >
+              <SettingsSection
+                title="Hotkeys"
+                icon={<Keyboard className="h-4 w-4" aria-hidden="true" />}
+                className="rounded-none border-0 bg-transparent p-0"
+              >
             <div className="space-y-4">
               <div>
                 <label htmlFor={FIELD_IDS.markerHotkey} className="mb-2 block text-sm text-neutral-300">Manual Marker Hotkey</label>
@@ -721,9 +875,20 @@ export function Settings() {
                 </p>
               </div>
             </div>
-          </SettingsSection>
+              </SettingsSection>
+            </SettingsGroup>
 
-          <SettingsSection title="Updates" icon={<RefreshCw className="h-4 w-4" />}>
+            <SettingsGroup
+              contentId="settings-group-app"
+              description="Updates and diagnostic tools"
+              icon={<RefreshCw className="h-4 w-4" aria-hidden="true" />}
+              title="App"
+            >
+              <SettingsSection
+                title="Updates"
+                icon={<RefreshCw className="h-4 w-4" aria-hidden="true" />}
+                className="rounded-none border-0 bg-transparent p-0"
+              >
             <div className="space-y-4">
               <SettingsToggleField
                 id={FIELD_IDS.enableAutoUpdate}
@@ -740,45 +905,118 @@ export function Settings() {
             </div>
           </SettingsSection>
 
-          <SettingsSection
-            title="Advanced & Troubleshooting"
-            icon={<AlertTriangle className="h-4 w-4" />}
+          <details
+            open={isAdvancedOpen}
+            onToggle={(event) => setIsAdvancedOpen(event.currentTarget.open)}
+            className="rounded-sm border border-white/10 bg-(--surface-1)/80 p-4"
           >
-            <SettingsToggleField
-              id={FIELD_IDS.enableRecordingDiagnostics}
-              checked={formData.enableRecordingDiagnostics}
-              onChange={(checked) => {
-                setFormData({
-                  ...formData,
-                  enableRecordingDiagnostics: checked,
-                });
-              }}
-              label="Enable Recording Diagnostics"
-              description="Write per-second audio and FFmpeg pacing logs for stutter or crackle debugging."
-            />
-          </SettingsSection>
+            <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-neutral-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 [&::-webkit-details-marker]:hidden">
+              <AlertTriangle className="h-4 w-4 text-neutral-400" aria-hidden="true" />
+              <span className="flex-1">Advanced & Troubleshooting</span>
+              <span className="text-xs font-normal text-neutral-500">Optional</span>
+            </summary>
+            <div className="mt-4 border-t border-white/10 pt-4 space-y-4">
+              <div>
+                <label htmlFor={FIELD_IDS.videoEncoderPreference} className="mb-2 block text-sm text-neutral-300">
+                  Video Encoder
+                </label>
+                <SettingsSelect
+                  id={FIELD_IDS.videoEncoderPreference}
+                  value={formData.videoEncoderPreference}
+                  options={videoEncoderOptions}
+                  disabled={isRecording || isLoadingVideoEncoders}
+                  onChange={(nextValue) => {
+                    if (isVideoEncoderPreference(nextValue)) {
+                      setFormData({ ...formData, videoEncoderPreference: nextValue });
+                    }
+                  }}
+                  ariaDescribedBy="settings-video-encoder-help"
+                />
+                <p id="settings-video-encoder-help" className="mt-1 text-xs text-neutral-400">
+                  Auto picks the best available encoder. Hardware encoders usually reduce in-game stutter.
+                </p>
+                {videoEncodersError && (
+                  <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-amber-200">
+                    <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                    {videoEncodersError}
+                  </p>
+                )}
+              </div>
+              <SettingsToggleField
+                id={FIELD_IDS.enableRecordingDiagnostics}
+                checked={formData.enableRecordingDiagnostics}
+                onChange={(checked) => {
+                  setFormData({
+                    ...formData,
+                    enableRecordingDiagnostics: checked,
+                  });
+                }}
+                label="Enable Recording Diagnostics"
+                description="Write per-second audio and FFmpeg pacing logs for stutter or crackle debugging."
+              />
+            </div>
+          </details>
+            </SettingsGroup>
+          </div>
         </div>
-      </div>
 
         <div className="shrink-0 border-t border-white/10 bg-(--surface-1) px-4 py-4 md:px-6">
-          <div className="flex flex-wrap justify-end gap-3 pr-2">
-            <Button
-              variant="secondary"
-              onClick={handleCancel}
-              disabled={!hasChanges}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              onClick={handleSave}
-              disabled={!hasChanges}
-            >
-              Save Changes
-            </Button>
+          <div className="flex flex-wrap items-center justify-between gap-3 pr-2">
+            <span className={`text-xs ${hasChanges ? "text-amber-200" : "text-neutral-500"}`}>
+              {hasChanges ? "Changes are not saved" : "All changes saved"}
+            </span>
+            <div className="flex flex-wrap justify-end gap-3">
+              <Button
+                variant="secondary"
+                onClick={handleCancel}
+                disabled={!hasChanges}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => void handleSave()}
+                disabled={!hasChanges}
+              >
+                Save Changes
+              </Button>
+            </div>
           </div>
         </div>
       </fieldset>
+
+      {isLeaveDialogOpen && navigationRequest && createPortal(
+        <div data-modal-root className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div
+            ref={leaveDialogRef}
+            className="w-full max-w-md rounded-sm border border-amber-300/25 bg-(--surface-2) p-5 shadow-(--surface-glow)"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-leave-title"
+            aria-describedby="settings-leave-description"
+            tabIndex={-1}
+          >
+            <h2 id="settings-leave-title" className="text-sm font-semibold text-neutral-100">
+              Leave Settings with unsaved changes?
+            </h2>
+            <p id="settings-leave-description" className="mt-2 text-sm leading-6 text-neutral-300">
+              Save your changes before leaving, or discard them and continue without saving.
+            </p>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <Button ref={cancelLeaveButtonRef} variant="secondary" onClick={handleCancelNavigation}>
+                Cancel
+              </Button>
+              <Button variant="secondary" onClick={handleDiscardAndLeave}>
+                Discard changes
+              </Button>
+              <Button variant="primary" onClick={() => void handleSaveAndLeave()}>
+                Save and leave
+              </Button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }

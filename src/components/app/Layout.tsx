@@ -30,6 +30,8 @@ function LayoutContent() {
   const autoUpdateDownloadedBytesRef = useRef(0);
   const autoUpdateContentLengthRef = useRef<number | null>(null);
   const [currentView, setCurrentView] = useState<AppView>("main");
+  const [settingsHasChanges, setSettingsHasChanges] = useState(false);
+  const [pendingSettingsNavigation, setPendingSettingsNavigation] = useState<AppView | null>(null);
   const [gameModeNavigationVersion, setGameModeNavigationVersion] = useState(0);
   const [isDebugBuild, setIsDebugBuild] = useState(false);
   const [isResizingMedia, setIsResizingMedia] = useState(false);
@@ -198,12 +200,30 @@ function LayoutContent() {
     });
   };
 
-  const handleNavigate = (view: AppView) => {
+  const navigateWithoutGuard = (view: AppView) => {
+    setPendingSettingsNavigation(null);
     setCurrentView(view);
 
     if (GAME_MODE_VIEWS.has(view)) {
       setGameModeNavigationVersion((currentVersion) => currentVersion + 1);
     }
+  };
+
+  const handleNavigate = (view: AppView) => {
+    if (view === currentView) {
+      return;
+    }
+
+    if (currentView === "settings" && settingsHasChanges) {
+      setPendingSettingsNavigation(view);
+      return;
+    }
+
+    navigateWithoutGuard(view);
+  };
+
+  const handleSettingsNavigationHandled = () => {
+    setPendingSettingsNavigation(null);
   };
 
   return (
@@ -283,7 +303,12 @@ function LayoutContent() {
               exit={reduceMotion ? undefined : "exit"}
               transition={smoothTransition}
             >
-              <Settings />
+              <Settings
+                navigationRequest={pendingSettingsNavigation}
+                onDirtyChange={setSettingsHasChanges}
+                onNavigationHandled={handleSettingsNavigationHandled}
+                onNavigateWithoutGuard={navigateWithoutGuard}
+              />
             </motion.div>
           ) : currentView === "warcraftlogs" ? (
             <motion.div
