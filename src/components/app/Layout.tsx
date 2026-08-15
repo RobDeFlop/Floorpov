@@ -11,7 +11,7 @@ import { RecordingsList } from "../playback/RecordingsList";
 import { Settings } from "../settings/Settings";
 import { CombatLogDebug } from "../debug/CombatLogDebug";
 import { WarcraftLogsUploadPage } from "../warcraftlogs/WarcraftLogsUploadPage";
-import { VideoProvider } from "../../contexts/VideoContext";
+import { useVideo, VideoProvider } from "../../contexts/VideoContext";
 import { RecordingProvider } from "../../contexts/RecordingContext";
 import { SettingsProvider, useSettings } from "../../contexts/SettingsContext";
 import { MarkerProvider } from "../../contexts/MarkerContext";
@@ -26,6 +26,7 @@ const AUTO_UPDATE_SESSION_FLAG = "floorpov:auto-update-check-ran";
 
 function LayoutContent() {
   const { settings, isLoading: isSettingsLoading } = useSettings();
+  const { isFullscreen } = useVideo();
   const hasAttemptedAutoUpdateRef = useRef(false);
   const autoUpdateDownloadedBytesRef = useRef(0);
   const autoUpdateContentLengthRef = useRef<number | null>(null);
@@ -237,13 +238,21 @@ function LayoutContent() {
           {autoUpdateBannerText}
         </div>
       )}
-      <TitleBar />
-      <div className="flex flex-1 min-h-0 flex-col gap-2 overflow-hidden p-2 md:flex-row md:gap-3 md:p-3">
-        <Sidebar
-          onNavigate={handleNavigate}
-          currentView={currentView}
-          isDebugMode={isDebugBuild}
-        />
+      {!isFullscreen && <TitleBar />}
+      <div
+        className={
+          isFullscreen
+            ? "flex min-h-0 flex-1 overflow-hidden"
+            : "flex flex-1 min-h-0 flex-col gap-2 overflow-hidden p-2 md:flex-row md:gap-3 md:p-3"
+        }
+      >
+        {!isFullscreen && (
+          <Sidebar
+            onNavigate={handleNavigate}
+            currentView={currentView}
+            isDebugMode={isDebugBuild}
+          />
+        )}
         <AnimatePresence mode="wait" initial={false}>
           {currentView === "main" ? (
             <motion.div
@@ -263,35 +272,39 @@ function LayoutContent() {
                   <VideoPlayer />
                 </main>
               </section>
-              <div
-                className={`flex h-3 w-full cursor-row-resize items-center justify-center border-y border-white/10 bg-(--surface-2) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45 ${
-                  isResizingMedia ? "bg-white/10" : "hover:bg-white/5"
-                }`}
-                onPointerDown={handleMediaResizeStart}
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowUp") {
-                    event.preventDefault();
-                    adjustMediaSectionHeight(-MEDIA_SECTION_RESIZE_DELTA);
-                    return;
-                  }
+              {!isFullscreen && (
+                <>
+                  <div
+                    className={`flex h-3 w-full cursor-row-resize items-center justify-center border-y border-white/10 bg-(--surface-2) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45 ${
+                      isResizingMedia ? "bg-white/10" : "hover:bg-white/5"
+                    }`}
+                    onPointerDown={handleMediaResizeStart}
+                    onKeyDown={(event) => {
+                      if (event.key === "ArrowUp") {
+                        event.preventDefault();
+                        adjustMediaSectionHeight(-MEDIA_SECTION_RESIZE_DELTA);
+                        return;
+                      }
 
-                  if (event.key === "ArrowDown") {
-                    event.preventDefault();
-                    adjustMediaSectionHeight(MEDIA_SECTION_RESIZE_DELTA);
-                  }
-                }}
-                role="separator"
-                aria-orientation="horizontal"
-                aria-label="Resize media section"
-                aria-valuemin={320}
-                aria-valuenow={mediaSectionHeight}
-                aria-valuemax={mediaSectionMaxHeight}
-                aria-valuetext={`${mediaSectionHeight}px`}
-                tabIndex={0}
-              >
-                <div className="h-0.5 w-24 rounded-full bg-white/35" />
-              </div>
-              <RecordingsList />
+                      if (event.key === "ArrowDown") {
+                        event.preventDefault();
+                        adjustMediaSectionHeight(MEDIA_SECTION_RESIZE_DELTA);
+                      }
+                    }}
+                    role="separator"
+                    aria-orientation="horizontal"
+                    aria-label="Resize media section"
+                    aria-valuemin={320}
+                    aria-valuenow={mediaSectionHeight}
+                    aria-valuemax={mediaSectionMaxHeight}
+                    aria-valuetext={`${mediaSectionHeight}px`}
+                    tabIndex={0}
+                  >
+                    <div className="h-0.5 w-24 rounded-full bg-white/35" />
+                  </div>
+                  <RecordingsList />
+                </>
+              )}
             </motion.div>
           ) : currentView === "settings" ? (
             <motion.div

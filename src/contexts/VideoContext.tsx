@@ -1,4 +1,6 @@
-import { createContext, useContext, useState, useRef, useCallback, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useRef, useCallback, useEffect, type ReactNode } from "react";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { VIDEO_LOADING_TIMEOUT_MS, VOLUME_MAX, VOLUME_MIN } from "../types/settings";
 
 interface VideoContextType {
@@ -19,9 +21,14 @@ interface VideoContextType {
   updateDuration: (duration: number) => void;
   syncIsPlaying: (playing: boolean) => void;
   setVideoLoading: (loading: boolean) => void;
+  isFullscreen: boolean;
+  fullscreenPhase: FullscreenPhase;
+  toggleFullscreen: () => Promise<void>;
+  exitFullscreen: () => Promise<void>;
 }
 
 const VideoContext = createContext<VideoContextType | null>(null);
+type FullscreenPhase = "windowed" | "entering" | "fullscreen" | "exiting";
 
 export function VideoProvider({ children }: { children: ReactNode }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -35,6 +42,11 @@ export function VideoProvider({ children }: { children: ReactNode }) {
   const [volume, setVolumeState] = useState(1);
   const [playbackRate, setPlaybackRateState] = useState(1);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  const [fullscreenPhase, setFullscreenPhaseState] = useState<FullscreenPhase>("windowed");
+  const fullscreenPhaseRef = useRef<FullscreenPhase>("windowed");
+  const fullscreenTransitionRef = useRef<Promise<void> | null>(null);
+  const closeAfterFullscreenExitRef = useRef(false);
+  const isFullscreen = fullscreenPhase !== "windowed";
 
   const togglePlay = useCallback(() => {
     if (!videoRef.current) return;
@@ -100,6 +112,131 @@ export function VideoProvider({ children }: { children: ReactNode }) {
     setPlaybackRateState(rate);
   }, []);
 
+  const setFullscreenPhase = useCallback((phase: FullscreenPhase) => {
+    fullscreenPhaseRef.current = phase;
+    setFullscreenPhaseState(phase);
+  }, []);
+
+  const exitFullscreen = useCallback(async () => {
+    if (!isTauri()) {
+      return;
+    }
+
+    try {
+      await fullscreenTransitionRef.current;
+    } catch {
+      return;
+    }
+
+    if (fullscreenPhaseRef.current !== "fullscreen") {
+      return;
+    }
+
+    setFullscreenPhase("exiting");
+    const transition = invoke<void>("exit_playback_fullscreen");
+    fullscreenTransitionRef.current = transition;
+
+    try {
+      await transition;
+      setFullscreenPhase("windowed");
+    } catch (error) {
+      setFullscreenPhase("fullscreen");
+      console.error("Fullscreen exit failed:", error);
+    } finally {
+      if (fullscreenTransitionRef.current === transition) {
+        fullscreenTransitionRef.current = null;
+      }
+    }
+  }, [setFullscreenPhase]);
+
+  const toggleFullscreen = useCallback(async () => {
+    if (!isTauri()) {
+      return;
+    }
+
+    if (fullscreenPhaseRef.current === "fullscreen") {
+      await exitFullscreen();
+      return;
+    }
+
+    if (fullscreenPhaseRef.current !== "windowed") {
+      return;
+    }
+
+    setFullscreenPhase("entering");
+    const transition = invoke<void>("enter_playback_fullscreen");
+    fullscreenTransitionRef.current = transition;
+
+    try {
+      await transition;
+      setFullscreenPhase("fullscreen");
+    } catch (error) {
+      console.error("Fullscreen entry failed:", error);
+      try {
+        await invoke<void>("exit_playback_fullscreen");
+        setFullscreenPhase("windowed");
+      } catch (rollbackError) {
+        setFullscreenPhase("fullscreen");
+        console.error("Fullscreen entry rollback failed:", rollbackError);
+      }
+    } finally {
+      if (fullscreenTransitionRef.current === transition) {
+        fullscreenTransitionRef.current = null;
+      }
+    }
+  }, [exitFullscreen, setFullscreenPhase]);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    const appWindow = getCurrentWindow();
+    let isCancelled = false;
+    let unsubscribe: (() => void) | undefined;
+
+    void appWindow
+      .onCloseRequested((event) => {
+        if (
+          fullscreenPhaseRef.current === "windowed" ||
+          closeAfterFullscreenExitRef.current
+        ) {
+          return;
+        }
+
+        event.preventDefault();
+        closeAfterFullscreenExitRef.current = true;
+
+        void (async () => {
+          try {
+            await exitFullscreen();
+
+            if (fullscreenPhaseRef.current === "windowed") {
+              await appWindow.close();
+              return;
+            }
+          } finally {
+            closeAfterFullscreenExitRef.current = false;
+          }
+        })();
+      })
+      .then((unlisten) => {
+        if (isCancelled) {
+          unlisten();
+        } else {
+          unsubscribe = unlisten;
+        }
+      })
+      .catch((error) => {
+        console.error("Fullscreen close listener failed:", error);
+      });
+
+    return () => {
+      isCancelled = true;
+      unsubscribe?.();
+    };
+  }, [exitFullscreen]);
+
   const loadVideo = useCallback(
     (src: string) => {
       const currentSrc = videoSrcRef.current;
@@ -164,6 +301,10 @@ export function VideoProvider({ children }: { children: ReactNode }) {
         updateDuration,
         syncIsPlaying,
         setVideoLoading,
+        isFullscreen,
+        fullscreenPhase,
+        toggleFullscreen,
+        exitFullscreen,
       }}
     >
       {children}
