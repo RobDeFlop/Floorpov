@@ -116,11 +116,14 @@ function isMarkerHotkey(value: string): value is MarkerHotkey {
   return HOTKEY_OPTIONS.some((option) => option.value === value);
 }
 
+export type SettingsGroupId = "recording" | "storage" | "wow" | "controls" | "app";
+
 interface SettingsGroupProps {
   contentId: string;
   description: string;
   icon: ReactNode;
-  defaultOpen?: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   title: string;
   children: ReactNode;
 }
@@ -129,20 +132,22 @@ function SettingsGroup({
   contentId,
   description,
   icon,
-  defaultOpen = false,
+  open,
+  onOpenChange,
   title,
   children,
 }: SettingsGroupProps) {
   return (
     <details
-      {...(defaultOpen ? { open: true } : {})}
-      className="group overflow-hidden rounded-sm border border-white/10 bg-(--surface-1)/80"
+      open={open}
+      onToggle={(event) => onOpenChange(event.currentTarget.open)}
+      className="group overflow-hidden rounded-sm border border-white/10 bg-(--surface-1)/80 transition-colors duration-150 group-open:border-emerald-300/25 motion-reduce:transition-none"
     >
       <summary
         aria-controls={contentId}
-        className="flex min-h-14 cursor-pointer list-none items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-300/60 [&::-webkit-details-marker]:hidden"
+        className="flex min-h-16 cursor-pointer list-none items-center gap-3 border-l-2 border-transparent px-4 py-3 transition-colors duration-150 hover:bg-white/5 group-open:border-l-emerald-300/70 group-open:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-300/60 motion-reduce:transition-none [&::-webkit-details-marker]:hidden"
       >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-white/5 text-neutral-300">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-white/5 text-neutral-300 transition-colors group-open:bg-emerald-300/10 group-open:text-emerald-200 motion-reduce:transition-none">
           {icon}
         </span>
         <span className="min-w-0 flex-1">
@@ -150,7 +155,7 @@ function SettingsGroup({
           <span className="mt-0.5 block text-xs text-neutral-500">{description}</span>
         </span>
         <ChevronDown
-          className="h-4 w-4 shrink-0 text-neutral-500 transition-transform duration-150 motion-reduce:transition-none group-open:rotate-180"
+          className="h-4 w-4 shrink-0 text-neutral-400 transition-transform duration-150 group-open:text-emerald-200 group-open:rotate-180 motion-reduce:transition-none"
           aria-hidden="true"
         />
       </summary>
@@ -163,14 +168,18 @@ function SettingsGroup({
 
 interface SettingsProps {
   navigationRequest: AppView | null;
+  openGroups: Record<SettingsGroupId, boolean>;
   onDirtyChange: (hasChanges: boolean) => void;
+  onGroupToggle: (groupId: SettingsGroupId, open: boolean) => void;
   onNavigationHandled: () => void;
   onNavigateWithoutGuard: (view: AppView) => void;
 }
 
 export function Settings({
   navigationRequest,
+  openGroups,
   onDirtyChange,
+  onGroupToggle,
   onNavigationHandled,
   onNavigateWithoutGuard,
 }: SettingsProps) {
@@ -181,7 +190,6 @@ export function Settings({
   const [isWowFolderValid, setIsWowFolderValid] = useState<boolean>(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState(false);
-  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const leaveDialogRef = useRef<HTMLDivElement>(null);
   const cancelLeaveButtonRef = useRef<HTMLButtonElement>(null);
   const [captureWindows, setCaptureWindows] = useState<CaptureWindowInfo[]>([]);
@@ -534,7 +542,8 @@ export function Settings({
               contentId="settings-group-recording"
               description="What FloorPoV captures and how it sounds"
               icon={<Monitor className="h-4 w-4" aria-hidden="true" />}
-              defaultOpen
+              open={openGroups.recording}
+              onOpenChange={(open) => onGroupToggle("recording", open)}
               title="Recording"
             >
               <SettingsSection
@@ -707,6 +716,8 @@ export function Settings({
               contentId="settings-group-storage"
               description="Where recordings go and when they are cleaned up"
               icon={<HardDrive className="h-4 w-4" aria-hidden="true" />}
+              open={openGroups.storage}
+              onOpenChange={(open) => onGroupToggle("storage", open)}
               title="Storage"
             >
               <SettingsSection
@@ -760,6 +771,8 @@ export function Settings({
               contentId="settings-group-wow"
               description="WoW combat detection and automatic recording"
               icon={<Swords className="h-4 w-4" aria-hidden="true" />}
+              open={openGroups.wow}
+              onOpenChange={(open) => onGroupToggle("wow", open)}
               title="WoW Integration"
             >
               <SettingsSection
@@ -848,6 +861,8 @@ export function Settings({
               contentId="settings-group-controls"
               description="Keyboard controls used during recording"
               icon={<Keyboard className="h-4 w-4" aria-hidden="true" />}
+              open={openGroups.controls}
+              onOpenChange={(open) => onGroupToggle("controls", open)}
               title="Controls"
             >
               <SettingsSection
@@ -882,6 +897,8 @@ export function Settings({
               contentId="settings-group-app"
               description="Updates and diagnostic tools"
               icon={<RefreshCw className="h-4 w-4" aria-hidden="true" />}
+              open={openGroups.app}
+              onOpenChange={(open) => onGroupToggle("app", open)}
               title="App"
             >
               <SettingsSection
@@ -905,17 +922,13 @@ export function Settings({
             </div>
           </SettingsSection>
 
-          <details
-            open={isAdvancedOpen}
-            onToggle={(event) => setIsAdvancedOpen(event.currentTarget.open)}
-            className="rounded-sm border border-white/10 bg-(--surface-1)/80 p-4"
-          >
-            <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-neutral-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 [&::-webkit-details-marker]:hidden">
+          <div className="rounded-sm border border-white/10 bg-(--surface-1)/80 p-4">
+            <div className="flex items-center gap-2 text-sm font-semibold text-neutral-200">
               <AlertTriangle className="h-4 w-4 text-neutral-400" aria-hidden="true" />
               <span className="flex-1">Advanced & Troubleshooting</span>
               <span className="text-xs font-normal text-neutral-500">Optional</span>
-            </summary>
-            <div className="mt-4 border-t border-white/10 pt-4 space-y-4">
+            </div>
+            <div className="mt-4 space-y-4 border-t border-white/10 pt-4">
               <div>
                 <label htmlFor={FIELD_IDS.videoEncoderPreference} className="mb-2 block text-sm text-neutral-300">
                   Video Encoder
@@ -955,7 +968,7 @@ export function Settings({
                 description="Write per-second audio and FFmpeg pacing logs for stutter or crackle debugging."
               />
             </div>
-          </details>
+          </div>
             </SettingsGroup>
           </div>
         </div>

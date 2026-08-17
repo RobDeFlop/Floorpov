@@ -8,7 +8,7 @@ import { GameModePage } from "../gamemodes/GameModePage";
 import { VideoPlayer } from "../playback/VideoPlayer";
 
 import { RecordingsList } from "../playback/RecordingsList";
-import { Settings } from "../settings/Settings";
+import { Settings, type SettingsGroupId } from "../settings/Settings";
 import { CombatLogDebug } from "../debug/CombatLogDebug";
 import { WarcraftLogsUploadPage } from "../warcraftlogs/WarcraftLogsUploadPage";
 import { useVideo, VideoProvider } from "../../contexts/VideoContext";
@@ -32,6 +32,13 @@ function LayoutContent() {
   const autoUpdateContentLengthRef = useRef<number | null>(null);
   const [currentView, setCurrentView] = useState<AppView>("main");
   const [settingsHasChanges, setSettingsHasChanges] = useState(false);
+  const [openSettingsGroups, setOpenSettingsGroups] = useState<Record<SettingsGroupId, boolean>>({
+    recording: true,
+    storage: false,
+    wow: false,
+    controls: false,
+    app: false,
+  });
   const [pendingSettingsNavigation, setPendingSettingsNavigation] = useState<AppView | null>(null);
   const [gameModeNavigationVersion, setGameModeNavigationVersion] = useState(0);
   const [isDebugBuild, setIsDebugBuild] = useState(false);
@@ -227,6 +234,13 @@ function LayoutContent() {
     setPendingSettingsNavigation(null);
   };
 
+  const handleSettingsGroupToggle = (groupId: SettingsGroupId, open: boolean) => {
+    setOpenSettingsGroups((currentGroups) => ({
+      ...currentGroups,
+      [groupId]: open,
+    }));
+  };
+
   return (
     <div className="relative h-screen w-screen flex flex-col bg-neutral-950 text-neutral-100 overflow-hidden">
       {autoUpdateBannerText && (
@@ -318,7 +332,9 @@ function LayoutContent() {
             >
               <Settings
                 navigationRequest={pendingSettingsNavigation}
+                openGroups={openSettingsGroups}
                 onDirtyChange={setSettingsHasChanges}
+                onGroupToggle={handleSettingsGroupToggle}
                 onNavigationHandled={handleSettingsNavigationHandled}
                 onNavigateWithoutGuard={navigateWithoutGuard}
               />
