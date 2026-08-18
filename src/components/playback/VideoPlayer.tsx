@@ -17,7 +17,11 @@ import { formatTime } from "../../utils/format";
 
 const PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
 
-export function VideoPlayer() {
+interface VideoPlayerProps {
+  emptyStateMessage?: string;
+}
+
+export function VideoPlayer({ emptyStateMessage = "No recording loaded" }: VideoPlayerProps) {
   const {
     videoRef,
     currentTime,
@@ -409,7 +413,7 @@ export function VideoPlayer() {
             <div className="mb-3 rounded-full border border-white/20 bg-white/5 p-2">
               <Clapperboard className="h-5 w-5 text-neutral-200" />
             </div>
-            <p className="text-neutral-400">No recording loaded</p>
+            <p className="text-neutral-400">{emptyStateMessage}</p>
           </>
         </div>
       )}

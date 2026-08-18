@@ -1,7 +1,7 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { Clock3, Film, HardDrive, RefreshCw, Trash2, XCircle } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRecording } from '../../contexts/RecordingContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useVideo } from '../../contexts/VideoContext';
@@ -9,8 +9,12 @@ import { useRecordingsList } from '../../hooks/useRecordingsList';
 import { panelVariants, smoothTransition } from '../../lib/motion';
 import { RecordingInfo } from '../../types/recording';
 import { type GameMode } from '../../types/ui';
-import { formatBytes, formatDate } from '../../utils/format';
-import { getRecordingDisplayTitle, isRecordingInGameMode } from '../../utils/recording-title';
+import { formatBytes, formatDate, formatEncounterCategory } from '../../utils/format';
+import {
+  getRecordingDisplayTitle,
+  inferRecordingMode,
+  isRecordingInGameMode,
+} from '../../utils/recording-title';
 import { DeleteConfirmDialog } from '../ui/DeleteConfirmDialog';
 import { useRecordingSelection } from './useRecordingSelection';
 
@@ -19,7 +23,10 @@ interface RecordingsListProps {
   title?: string;
   description?: string;
   activeRecordingPath?: string | null;
+  autoSelectLatest?: boolean;
+  emptyMessage?: string;
   onRecordingActivate?: (recording: RecordingInfo) => void;
+  showManagementActions?: boolean;
 }
 
 interface ModeDetails {
@@ -49,11 +56,12 @@ function getModeDetails(
   recording: RecordingInfo,
   gameModeContext?: GameMode,
 ): ModeDetails | null {
-  if (!gameModeContext) {
+  const resolvedMode = inferRecordingMode(recording, gameModeContext);
+  if (!resolvedMode) {
     return null;
   }
 
-  if (gameModeContext === "mythic-plus") {
+  if (resolvedMode === "mythic-plus") {
     return {
       primaryLabel: "Dungeon",
       primaryValue: recording.zone_name ?? "Unknown",
@@ -62,7 +70,7 @@ function getModeDetails(
     };
   }
 
-  if (gameModeContext === "raid") {
+  if (resolvedMode === "raid") {
     return {
       primaryLabel: "Raid",
       primaryValue: recording.zone_name ?? "Unknown",
@@ -84,7 +92,10 @@ export function RecordingsList({
   title,
   description,
   activeRecordingPath,
+  autoSelectLatest = false,
+  emptyMessage,
   onRecordingActivate,
+  showManagementActions = true,
 }: RecordingsListProps) {
   const { settings } = useSettings();
   const { loadVideo, videoSrc, isVideoLoading } = useVideo();
@@ -96,6 +107,7 @@ export function RecordingsList({
   const [pendingDeleteRecordings, setPendingDeleteRecordings] = useState<RecordingInfo[]>([]);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const recordingsContainerRef = useRef<HTMLDivElement>(null);
+  const hasAutoSelectedLatestRef = useRef(false);
   const displayError = deleteError ?? listError;
   const isDeletingRecordings = deletingRecordingPaths.length > 0;
   const hasPendingDeleteRecordings = pendingDeleteRecordings.length > 0;
@@ -144,6 +156,38 @@ export function RecordingsList({
     loadVideo,
     loadingRecordingPath,
     onRecordingActivate,
+  ]);
+
+  useEffect(() => {
+    if (
+      !autoSelectLatest ||
+      hasAutoSelectedLatestRef.current ||
+      isLoading ||
+      !settings.outputFolder
+    ) {
+      return;
+    }
+
+    if (videoSrc || filteredRecordings.length === 0) {
+      hasAutoSelectedLatestRef.current = true;
+      return;
+    }
+
+    if (isRecording || isActionLocked) {
+      return;
+    }
+
+    hasAutoSelectedLatestRef.current = true;
+    void handleLoadRecording(filteredRecordings[0]);
+  }, [
+    autoSelectLatest,
+    filteredRecordings,
+    handleLoadRecording,
+    isActionLocked,
+    isLoading,
+    isRecording,
+    settings.outputFolder,
+    videoSrc,
   ]);
 
   const {
@@ -299,11 +343,12 @@ export function RecordingsList({
           </p>
         ) : filteredRecordings.length === 0 ? (
           <p className="text-xs text-neutral-400">
-            {`No recordings found in ${settings.outputFolder}`}
+            {emptyMessage ?? `No recordings found in ${settings.outputFolder}`}
           </p>
         ) : (
           <>
-            <div className="mb-1 flex items-center justify-between gap-2 border-b border-white/10 pb-1.5">
+            {showManagementActions && (
+              <div className="mb-1 flex items-center justify-between gap-2 border-b border-white/10 pb-1.5">
               <div className="flex items-center gap-1">
                 <label className="ml-2 inline-flex h-6 w-6 items-center justify-center">
                   <input
@@ -360,7 +405,8 @@ export function RecordingsList({
                   Refresh
                 </motion.button>
               </div>
-            </div>
+              </div>
+            )}
 
             <ul className="space-y-1" role="list">
             {filteredRecordings.map((recording) => {
@@ -374,7 +420,7 @@ export function RecordingsList({
               return (
                 <motion.li
                   key={`${recording.filename}-${recording.created_at}`}
-                  className={`grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1 rounded-sm border text-left transition-colors hover:bg-white/5 ${
+                  className={`grid w-full ${showManagementActions ? "grid-cols-[auto_minmax(0,1fr)_auto]" : "grid-cols-1"} items-center gap-1 rounded-sm border text-left transition-colors hover:bg-white/5 ${
                     isLoadedRecording || isActiveRecording
                       ? 'border-emerald-300/45 bg-emerald-500/16 hover:border-emerald-300/55'
                       : isSelectedRecording
@@ -385,22 +431,35 @@ export function RecordingsList({
                   animate={{ opacity: 1, y: 0 }}
                   transition={smoothTransition}
                 >
-                  <label className="ml-2 inline-flex h-6 w-6 items-center justify-center">
-                    <input
-                      type="checkbox"
-                      checked={isSelectedRecording}
-                      readOnly
-                      onMouseDown={(event) => handleSelectionControlMouseDown(event, recording.file_path)}
-                      onClick={handleSelectionControlClick}
-                      disabled={isActionLocked}
-                       className="h-3.5 w-3.5 rounded-sm border-white/30 bg-black/30 accent-emerald-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 disabled:cursor-not-allowed disabled:opacity-50"
-                      aria-label={`Select recording ${displayTitle}`}
-                    />
-                  </label>
+                  {showManagementActions && (
+                    <label className="ml-2 inline-flex h-6 w-6 items-center justify-center">
+                      <input
+                        type="checkbox"
+                        checked={isSelectedRecording}
+                        readOnly
+                        onMouseDown={(event) => handleSelectionControlMouseDown(event, recording.file_path)}
+                        onClick={handleSelectionControlClick}
+                        disabled={isActionLocked}
+                        className="h-3.5 w-3.5 rounded-sm border-white/30 bg-black/30 accent-emerald-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label={`Select recording ${displayTitle}`}
+                      />
+                    </label>
+                  )}
                   <button
                     type="button"
-                    onMouseDown={(event) => handleRecordingRowMouseDown(event, recording)}
-                    onClick={(event) => handleRecordingRowClick(event, recording)}
+                    onMouseDown={
+                      showManagementActions
+                        ? (event) => handleRecordingRowMouseDown(event, recording)
+                        : undefined
+                    }
+                    onClick={(event) => {
+                      if (showManagementActions) {
+                        handleRecordingRowClick(event, recording);
+                        return;
+                      }
+
+                      void handleLoadRecording(recording);
+                    }}
                     disabled={isActionLocked}
                     aria-current={isLoadedRecording || isActiveRecording ? 'true' : undefined}
                     className="min-w-0 flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45 disabled:cursor-not-allowed disabled:opacity-60"
@@ -408,8 +467,15 @@ export function RecordingsList({
                     <span className="min-w-0 flex items-center gap-2">
                       <HardDrive className="w-3.5 h-3.5 text-neutral-300/80 shrink-0" />
                       <span className="min-w-0">
-                        <span className="block truncate text-xs text-neutral-200" title={displayTitle}>
-                          {displayTitle}
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="block truncate text-xs text-neutral-200" title={displayTitle}>
+                            {displayTitle}
+                          </span>
+                          {!gameModeContext && inferRecordingMode(recording) && (
+                            <span className="shrink-0 rounded-full border border-emerald-300/25 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-emerald-200">
+                              {formatEncounterCategory(inferRecordingMode(recording) ?? undefined)}
+                            </span>
+                          )}
                         </span>
                         {modeDetails && (
                           <span className="mt-0.5 block truncate text-[11px] text-neutral-400">
@@ -430,16 +496,18 @@ export function RecordingsList({
                       {`${formatBytes(recording.size_bytes)} · ${formatDate(recording.created_at)}`}
                     </span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteRecording(recording)}
-                    disabled={isRecording || Boolean(loadingRecordingPath) || isDeletingRecordings}
-                    className="mr-1 inline-flex h-6 w-6 items-center justify-center rounded-sm border border-rose-300/25 bg-rose-500/10 text-rose-200 transition-colors hover:bg-rose-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/60 disabled:cursor-not-allowed disabled:opacity-50"
-                    title="Delete recording"
-                    aria-label={`Delete recording ${recording.filename}`}
-                  >
-                    <Trash2 className={`h-3.5 w-3.5 ${deletingRecordingPathSet.has(recording.file_path) ? 'animate-pulse' : ''}`} />
-                  </button>
+                  {showManagementActions && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteRecording(recording)}
+                      disabled={isRecording || Boolean(loadingRecordingPath) || isDeletingRecordings}
+                      className="mr-1 inline-flex h-6 w-6 items-center justify-center rounded-sm border border-rose-300/25 bg-rose-500/10 text-rose-200 transition-colors hover:bg-rose-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/60 disabled:cursor-not-allowed disabled:opacity-50"
+                      title="Delete recording"
+                      aria-label={`Delete recording ${recording.filename}`}
+                    >
+                      <Trash2 className={`h-3.5 w-3.5 ${deletingRecordingPathSet.has(recording.file_path) ? 'animate-pulse' : ''}`} />
+                    </button>
+                  )}
                 </motion.li>
               );
             })}
