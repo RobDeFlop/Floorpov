@@ -1,6 +1,7 @@
 import { Clapperboard } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { MEDIA_SECTION_RESIZE_DELTA } from "../../types/settings";
+import { PageHeader } from "./PageHeader";
 import { VideoPlayer } from "../playback/VideoPlayer";
 import { RecordingsList } from "../playback/RecordingsList";
 
@@ -95,17 +96,11 @@ export function HomePage() {
 
   return (
     <div className={`flex h-full min-h-0 flex-col ${isResizingMedia ? "select-none" : ""}`}>
-      <header className="flex shrink-0 items-center border-b border-white/10 bg-(--surface-1) px-4 py-4 md:px-6">
-        <div>
-          <h1 className="inline-flex items-center gap-2 text-lg font-semibold text-neutral-100">
-            <Clapperboard className="h-4 w-4 text-neutral-300" aria-hidden="true" />
-            Home
-          </h1>
-          <p className="mt-1 text-sm text-neutral-400">
-            Review recent recordings and continue where you left off.
-          </p>
-        </div>
-      </header>
+      <PageHeader
+        icon={Clapperboard}
+        title="Home"
+        description="Review recent recordings and continue where you left off."
+      />
 
       <section
         className="flex w-full shrink-0 flex-col overflow-hidden"

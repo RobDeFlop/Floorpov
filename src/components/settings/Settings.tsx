@@ -2,6 +2,7 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { motion, useReducedMotion } from "motion/react";
 import {
   AlertTriangle,
   AppWindow,
@@ -18,6 +19,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useRecording } from "../../contexts/RecordingContext";
+import { smoothTransition } from "../../lib/motion";
 import { useSettings } from "../../contexts/SettingsContext";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
@@ -137,17 +139,28 @@ function SettingsGroup({
   title,
   children,
 }: SettingsGroupProps) {
+  const reduceMotion = useReducedMotion();
+
   return (
-    <details
-      open={open}
-      onToggle={(event) => onOpenChange(event.currentTarget.open)}
-      className="group overflow-hidden rounded-sm border border-white/10 bg-(--surface-1)/80 transition-colors duration-150 group-open:border-emerald-300/25 motion-reduce:transition-none"
+    <section
+      className={`overflow-hidden rounded-sm border bg-(--surface-1)/80 transition-colors duration-150 motion-reduce:transition-none ${
+        open ? "border-emerald-300/25" : "border-white/10"
+      }`}
     >
-      <summary
+      <button
+        type="button"
         aria-controls={contentId}
-        className="flex min-h-16 cursor-pointer list-none items-center gap-3 border-l-2 border-transparent px-4 py-3 transition-colors duration-150 hover:bg-white/5 group-open:border-l-emerald-300/70 group-open:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-300/60 motion-reduce:transition-none [&::-webkit-details-marker]:hidden"
+        aria-expanded={open}
+        onClick={() => onOpenChange(!open)}
+        className={`flex min-h-16 w-full cursor-pointer items-center gap-3 border-l-2 border-transparent px-4 py-3 text-left transition-colors duration-150 hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-300/60 motion-reduce:transition-none ${
+          open ? "border-l-emerald-300/70 bg-white/[0.04]" : ""
+        }`}
       >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-white/5 text-neutral-300 transition-colors group-open:bg-emerald-300/10 group-open:text-emerald-200 motion-reduce:transition-none">
+        <span
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-white/5 text-neutral-300 transition-colors motion-reduce:transition-none ${
+            open ? "bg-emerald-300/10 text-emerald-200" : ""
+          }`}
+        >
           {icon}
         </span>
         <span className="min-w-0 flex-1">
@@ -155,14 +168,25 @@ function SettingsGroup({
           <span className="mt-0.5 block text-xs text-neutral-500">{description}</span>
         </span>
         <ChevronDown
-          className="h-4 w-4 shrink-0 text-neutral-400 transition-transform duration-150 group-open:text-emerald-200 group-open:rotate-180 motion-reduce:transition-none"
+          className={`h-4 w-4 shrink-0 text-neutral-400 transition-transform duration-150 motion-reduce:transition-none ${
+            open ? "rotate-180 text-emerald-200" : ""
+          }`}
           aria-hidden="true"
         />
-      </summary>
-      <div id={contentId} className="space-y-6 border-t border-white/10 px-4 pb-4 pt-4">
-        {children}
-      </div>
-    </details>
+      </button>
+      <motion.div
+        className="overflow-hidden"
+        initial={false}
+        animate={{ height: open ? "auto" : 0, opacity: open ? 1 : 0 }}
+        transition={reduceMotion ? { duration: 0 } : smoothTransition}
+        aria-hidden={!open}
+        inert={!open}
+      >
+        <div id={contentId} className="space-y-6 border-t border-white/10 px-4 pb-4 pt-4">
+          {children}
+        </div>
+      </motion.div>
+    </section>
   );
 }
 

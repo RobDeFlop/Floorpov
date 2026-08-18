@@ -10,7 +10,7 @@ import {
   Trophy,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useMarker } from "../../contexts/MarkerContext";
 import { RecordingMetadata } from "../../types/events";
 import { RecordingInfo } from "../../types/recording";
@@ -19,6 +19,8 @@ import { formatBytes, formatDate, formatEncounterCategory, formatTime, getEventT
 import { getRecordingDisplayTitle } from "../../utils/recording-title";
 import { GameEvents } from "../events/GameEvents";
 import { VideoPlayer } from "../playback/VideoPlayer";
+import { contentViewVariants, smoothTransition } from "../../lib/motion";
+import { PageHeader } from "../app/PageHeader";
 import { TabControls, type TabControlItem } from "../ui/TabControls";
 import { GameModeRecordingsBrowser } from "./GameModeRecordingsBrowser";
 import { PlayerOverviewTable } from "./PlayerOverviewTable";
@@ -95,6 +97,7 @@ export function GameModePage({ gameMode }: GameModePageProps) {
   const [isEventsOpen, setIsEventsOpen] = useState(false);
   const metadataRequestPathRef = useRef<string | null>(null);
   const { setEncounters } = useMarker();
+  const reduceMotion = useReducedMotion();
 
   const filterEvent = useCallback(
     (targetKind: string | undefined, target: string | undefined) => {
@@ -148,6 +151,16 @@ export function GameModePage({ gameMode }: GameModePageProps) {
     },
     [loadRecordingMetadata],
   );
+
+  const handleBackToSessions = useCallback(() => {
+    metadataRequestPathRef.current = null;
+    setSelectedRecording(null);
+    setRecordingMetadata(null);
+    setMetadataError(null);
+    setIsMetadataLoading(false);
+    setActiveTab("video-analysis");
+    setEncounters([]);
+  }, [setEncounters]);
 
   const sortedEventCounts = useMemo(() => {
     if (!recordingMetadata?.importantEventCounts) {
@@ -229,50 +242,55 @@ export function GameModePage({ gameMode }: GameModePageProps) {
   }, [recordingMetadata?.encounters, gameMode, setEncounters]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {!selectedRecording ? (
-        <>
-          <header className="border-b border-white/10 bg-(--surface-1) px-4 py-4 md:px-6">
-            <div className="flex items-center gap-3">
-              <Icon className="h-5 w-5 text-neutral-300" />
-              <div>
-                <h1 className="inline-flex items-center gap-2 text-lg font-semibold text-neutral-100">
-                  {config.overviewTitle}
-                </h1>
-                <p className="text-xs uppercase tracking-[0.12em] text-neutral-500">
-                  {config.description}
-                </p>
-              </div>
-            </div>
-          </header>
-          <GameModeRecordingsBrowser
-            gameMode={gameMode}
-            onRecordingActivate={handleRecordingActivate}
-          />
-        </>
-      ) : (
-        <>
-          <header className="border-b border-white/10 bg-(--surface-1) px-4 py-4 md:px-6">
-            <div className="flex items-center gap-3">
-              <Icon className="h-5 w-5 text-neutral-300" />
-              <div>
-                <h1 className="inline-flex items-center gap-2 text-lg font-semibold text-neutral-100">
-                  {config.analysisTitle}
-                </h1>
-                <p className="max-w-[60ch] truncate text-xs text-neutral-400">
-                  {getRecordingDisplayTitle(selectedRecording, gameMode)}
-                </p>
-              </div>
-            </div>
-          </header>
-          <TabControls
-            value={activeTab}
-            onChange={setActiveTab}
-            items={ANALYSIS_TAB_ITEMS}
-            ariaLabel="Recording analysis tabs"
-            idBase={ANALYSIS_TABS_ID_BASE}
-          />
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
+      <motion.div
+        className={`absolute inset-0 flex min-h-0 flex-col ${selectedRecording ? "pointer-events-none" : ""}`}
+        variants={contentViewVariants}
+        animate={selectedRecording ? "hidden" : "visible"}
+        transition={reduceMotion ? { duration: 0 } : smoothTransition}
+        aria-hidden={selectedRecording !== null}
+        inert={selectedRecording !== null}
+      >
+        <PageHeader icon={Icon} title={config.overviewTitle} description={config.description} />
+        <GameModeRecordingsBrowser
+          gameMode={gameMode}
+          onRecordingActivate={handleRecordingActivate}
+        />
+      </motion.div>
+
+      <motion.div
+        className={`absolute inset-0 flex min-h-0 flex-col ${selectedRecording ? "" : "pointer-events-none"}`}
+        variants={contentViewVariants}
+        animate={selectedRecording ? "visible" : "hidden"}
+        transition={reduceMotion ? { duration: 0 } : smoothTransition}
+        aria-hidden={selectedRecording === null}
+        inert={selectedRecording === null}
+      >
+        {selectedRecording && (
+          <>
+            <PageHeader
+              icon={Icon}
+              title={config.analysisTitle}
+              description={getRecordingDisplayTitle(selectedRecording, gameMode)}
+              backAction={{ label: "Back to sessions", onClick: handleBackToSessions }}
+            />
+            <TabControls
+              value={activeTab}
+              onChange={setActiveTab}
+              items={ANALYSIS_TAB_ITEMS}
+              ariaLabel="Recording analysis tabs"
+              idBase={ANALYSIS_TABS_ID_BASE}
+            />
             <div className="min-h-0 flex-1 overflow-hidden">
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.div
+                  key={activeTab}
+                  className="h-full min-h-0"
+                  initial={reduceMotion ? false : { opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={reduceMotion ? undefined : { opacity: 0, y: -4 }}
+                  transition={reduceMotion ? { duration: 0 } : smoothTransition}
+                >
             {activeTab === "video-analysis" ? (
               <div
                 id={`${ANALYSIS_TABS_ID_BASE}-video-analysis-panel`}
@@ -294,7 +312,7 @@ export function GameModePage({ gameMode }: GameModePageProps) {
               >
                 <section className="rounded-sm border border-white/10 bg-(--surface-1)/80 p-3">
                   <h2 className="text-sm font-semibold text-neutral-100">Recording Summary</h2>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-neutral-300">
+                  <div className="mt-2 grid grid-cols-1 gap-2 text-xs text-neutral-300 sm:grid-cols-2">
                     <div className="rounded-sm border border-white/10 bg-black/20 px-2 py-1.5">
                       <div className="text-[10px] uppercase tracking-[0.09em] text-neutral-500">File</div>
                       <div className="mt-1 truncate text-neutral-100" title={selectedRecording.file_path}>
@@ -562,10 +580,13 @@ export function GameModePage({ gameMode }: GameModePageProps) {
                   </>
                 )}
               </div>
-            )}
-          </div>
-        </>
-      )}
+                )}
+                </motion.div>
+              </AnimatePresence>
+            </div>
+          </>
+        )}
+      </motion.div>
     </div>
   );
 }

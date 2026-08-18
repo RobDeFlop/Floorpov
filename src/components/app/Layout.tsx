@@ -207,11 +207,12 @@ function LayoutContent() {
             isDebugMode={isDebugBuild}
           />
         )}
-        <AnimatePresence mode="wait" initial={false}>
-          {currentView === "main" ? (
+        <div className="relative min-h-0 min-w-0 flex-1">
+          <AnimatePresence mode="sync" initial={false}>
+            {currentView === "main" ? (
             <motion.div
               key="main-view"
-              className="flex-1 flex flex-col min-w-0 rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
+              className="absolute inset-0 flex min-w-0 flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
               variants={panelVariants}
               initial={reduceMotion ? false : "initial"}
               animate="animate"
@@ -223,7 +224,7 @@ function LayoutContent() {
           ) : currentView === "settings" ? (
             <motion.div
               key="settings-view"
-              className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
+              className="absolute inset-0 min-w-0 min-h-0 flex flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
               variants={panelVariants}
               initial={reduceMotion ? false : "initial"}
               animate="animate"
@@ -242,7 +243,7 @@ function LayoutContent() {
           ) : currentView === "warcraftlogs" ? (
             <motion.div
               key="warcraftlogs-view"
-              className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
+              className="absolute inset-0 min-w-0 min-h-0 flex flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
               variants={panelVariants}
               initial={reduceMotion ? false : "initial"}
               animate="animate"
@@ -254,7 +255,7 @@ function LayoutContent() {
           ) : currentView === "mythic-plus" ? (
             <motion.div
               key="mythic-plus-view"
-              className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
+              className="absolute inset-0 min-w-0 min-h-0 flex flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
               variants={panelVariants}
               initial={reduceMotion ? false : "initial"}
               animate="animate"
@@ -269,7 +270,7 @@ function LayoutContent() {
           ) : currentView === "raid" ? (
             <motion.div
               key="raid-view"
-              className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
+              className="absolute inset-0 min-w-0 min-h-0 flex flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
               variants={panelVariants}
               initial={reduceMotion ? false : "initial"}
               animate="animate"
@@ -281,7 +282,7 @@ function LayoutContent() {
           ) : currentView === "pvp" ? (
             <motion.div
               key="pvp-view"
-              className="h-full flex-1 min-w-0 min-h-0 flex flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
+              className="absolute inset-0 min-w-0 min-h-0 flex flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
               variants={panelVariants}
               initial={reduceMotion ? false : "initial"}
               animate="animate"
@@ -291,9 +292,20 @@ function LayoutContent() {
               <GameModePage key={`pvp-page-${gameModeNavigationVersion}`} gameMode="pvp" />
             </motion.div>
           ) : (
-            <CombatLogDebug />
+            <motion.div
+              key="debug-view"
+              className="absolute inset-0 min-w-0 min-h-0 flex flex-col rounded-sm border border-white/10 bg-(--surface-1) shadow-(--surface-glow) overflow-hidden"
+              variants={panelVariants}
+              initial={reduceMotion ? false : "initial"}
+              animate="animate"
+              exit={reduceMotion ? undefined : "exit"}
+              transition={smoothTransition}
+            >
+              <CombatLogDebug />
+            </motion.div>
           )}
-        </AnimatePresence>
+          </AnimatePresence>
+        </div>
       </div>
     </div>
   );

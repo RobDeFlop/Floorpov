@@ -1,3 +1,5 @@
+import { motion, useReducedMotion } from "motion/react";
+
 export interface PlayerStatEntry {
   player: string;
   count: number;
@@ -10,6 +12,7 @@ interface PlayerStatChartProps {
 }
 
 export function PlayerStatChart({ title, data, color }: PlayerStatChartProps) {
+  const reduceMotion = useReducedMotion();
   const sanitizedData = data.map((entry) => ({
     player: entry.player.trim() || "Unknown",
     count: Math.max(0, entry.count),
@@ -36,8 +39,15 @@ export function PlayerStatChart({ title, data, color }: PlayerStatChartProps) {
               {entry.player}
             </span>
             <div className="h-5 min-w-0 flex-1 rounded-sm bg-white/5" title={`${entry.player}: ${entry.count}`}>
-              <div
-                className="h-full rounded-sm opacity-75"
+              <motion.div
+                className="h-full origin-left rounded-sm opacity-75"
+                initial={reduceMotion ? false : { scaleX: 0, opacity: 0.45 }}
+                animate={{ scaleX: 1, opacity: 0.75 }}
+                transition={
+                  reduceMotion
+                    ? { duration: 0 }
+                    : { duration: 0.18, delay: Math.min(index, 6) * 0.025 }
+                }
                 style={{ width: `${(entry.count / maxCount) * 100}%`, backgroundColor: color }}
               />
             </div>
