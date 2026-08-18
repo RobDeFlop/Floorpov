@@ -23,68 +23,10 @@ interface RecordingsListProps {
   title?: string;
   description?: string;
   activeRecordingPath?: string | null;
-  autoSelectLatest?: boolean;
+  autoLoadLatest?: boolean;
   emptyMessage?: string;
   onRecordingActivate?: (recording: RecordingInfo) => void;
   showManagementActions?: boolean;
-}
-
-interface ModeDetails {
-  primaryLabel: string;
-  primaryValue: string;
-  secondaryLabel: string;
-  secondaryValue: string;
-}
-
-function extractMythicKeyLevel(recording: RecordingInfo): string | null {
-  const candidates = [recording.filename, recording.encounter_name, recording.zone_name].filter(
-    Boolean,
-  ) as string[];
-  const keyPattern = /(?:\+|\bkey\s*)(\d{1,2})\b/i;
-
-  for (const candidate of candidates) {
-    const match = candidate.match(keyPattern);
-    if (match?.[1]) {
-      return `+${match[1]}`;
-    }
-  }
-
-  return null;
-}
-
-function getModeDetails(
-  recording: RecordingInfo,
-  gameModeContext?: GameMode,
-): ModeDetails | null {
-  const resolvedMode = inferRecordingMode(recording, gameModeContext);
-  if (!resolvedMode) {
-    return null;
-  }
-
-  if (resolvedMode === "mythic-plus") {
-    return {
-      primaryLabel: "Dungeon",
-      primaryValue: recording.zone_name ?? "Unknown",
-      secondaryLabel: "Key",
-      secondaryValue: extractMythicKeyLevel(recording) ?? "Unknown",
-    };
-  }
-
-  if (resolvedMode === "raid") {
-    return {
-      primaryLabel: "Raid",
-      primaryValue: recording.zone_name ?? "Unknown",
-      secondaryLabel: "Encounter",
-      secondaryValue: recording.encounter_name ?? "Unknown",
-    };
-  }
-
-  return {
-    primaryLabel: "Map",
-    primaryValue: recording.zone_name ?? "Unknown",
-    secondaryLabel: "Encounter",
-    secondaryValue: recording.encounter_name ?? "Unknown",
-  };
 }
 
 export function RecordingsList({
@@ -92,7 +34,7 @@ export function RecordingsList({
   title,
   description,
   activeRecordingPath,
-  autoSelectLatest = false,
+  autoLoadLatest = false,
   emptyMessage,
   onRecordingActivate,
   showManagementActions = true,
@@ -160,7 +102,7 @@ export function RecordingsList({
 
   useEffect(() => {
     if (
-      !autoSelectLatest ||
+      !autoLoadLatest ||
       hasAutoSelectedLatestRef.current ||
       isLoading ||
       !settings.outputFolder
@@ -180,7 +122,7 @@ export function RecordingsList({
     hasAutoSelectedLatestRef.current = true;
     void handleLoadRecording(filteredRecordings[0]);
   }, [
-    autoSelectLatest,
+    autoLoadLatest,
     filteredRecordings,
     handleLoadRecording,
     isActionLocked,
@@ -414,7 +356,6 @@ export function RecordingsList({
               const isLoadedRecording = videoSrc === recordingSource;
               const isSelectedRecording = selectedRecordingPathSet.has(recording.file_path);
               const isActiveRecording = activeRecordingPath === recording.file_path;
-              const modeDetails = getModeDetails(recording, gameModeContext);
               const displayTitle = getRecordingDisplayTitle(recording, gameModeContext);
 
               return (
@@ -477,14 +418,6 @@ export function RecordingsList({
                             </span>
                           )}
                         </span>
-                        {modeDetails && (
-                          <span className="mt-0.5 block truncate text-[11px] text-neutral-400">
-                            <span className="text-neutral-500">{modeDetails.primaryLabel}:</span>{' '}
-                            {modeDetails.primaryValue}
-                            <span className="text-neutral-500">{' '}· {modeDetails.secondaryLabel}:</span>{' '}
-                            {modeDetails.secondaryValue}
-                          </span>
-                        )}
                         <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-neutral-400 sm:hidden">
                           <Clock3 className="h-3 w-3" />
                           {`${formatBytes(recording.size_bytes)} · ${formatDate(recording.created_at)}`}

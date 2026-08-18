@@ -5,7 +5,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { TitleBar } from "./TitleBar";
 import { Sidebar } from "./Sidebar";
 import { GameModePage } from "../gamemodes/GameModePage";
-import { HomeRecordingHub } from "./HomeRecordingHub";
+import { HomePage } from "./HomePage";
 import { Settings, type SettingsGroupId } from "../settings/Settings";
 import { CombatLogDebug } from "../debug/CombatLogDebug";
 import { WarcraftLogsUploadPage } from "../warcraftlogs/WarcraftLogsUploadPage";
@@ -218,7 +218,7 @@ function LayoutContent() {
               exit={reduceMotion ? undefined : "exit"}
               transition={smoothTransition}
             >
-              <HomeRecordingHub />
+              <HomePage />
             </motion.div>
           ) : currentView === "settings" ? (
             <motion.div
