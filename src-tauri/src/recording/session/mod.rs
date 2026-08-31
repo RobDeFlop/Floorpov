@@ -27,7 +27,17 @@ pub(crate) fn spawn_recording_task(
 ) -> oneshot::Receiver<Result<(), String>> {
     let (startup_tx, startup_rx) = oneshot::channel();
     thread::spawn(move || {
-        run_recording_session(app_handle, state, session_config, stop_rx, startup_tx);
+        let panic_app_handle = app_handle.clone();
+        let panic_state = state.clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_recording_session(app_handle, state, session_config, stop_rx, startup_tx);
+        }));
+        if result.is_err() {
+            tracing::error!("Recording session thread panicked");
+            emit_recording_warning_cleared(&panic_app_handle);
+            clear_recording_state(&panic_state);
+            emit_recording_stopped(&panic_app_handle);
+        }
     });
     startup_rx
 }
