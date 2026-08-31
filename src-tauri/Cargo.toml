@@ -33,8 +33,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 notify = "8.2.0"
 wasapi = "0.23"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_Performance", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "multipart", "cookies", "rustls"] }
 regex = "1"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 keyring = "3"
+
+[target.'cfg(windows)'.dependencies]
+windows-capture = "=2.0.1"

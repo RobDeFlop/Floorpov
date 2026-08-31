@@ -2,6 +2,8 @@ mod audio_pipeline;
 mod ffmpeg;
 pub(crate) mod metadata;
 mod model;
+#[cfg(target_os = "windows")]
+mod native;
 mod segments;
 mod session;
 mod window_capture;
