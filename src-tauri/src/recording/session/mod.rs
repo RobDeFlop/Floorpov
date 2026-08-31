@@ -43,6 +43,16 @@ fn run_recording_session(
     let initial_backend = initial_backend(request, &session_config.video_encoder_preference);
     let mut startup_notifier = StartupNotifier::new(startup_tx);
 
+    if matches!(request, RecordingBackendRequest::Native)
+        && session_config.video_encoder_preference != "auto"
+    {
+        tracing::warn!(
+            backend = "native",
+            video_encoder_preference = %session_config.video_encoder_preference,
+            "Forced native recording ignores the legacy FFmpeg encoder preference"
+        );
+    }
+
     tracing::info!(
         backend_request = ?request,
         backend = initial_backend.label(),
@@ -63,7 +73,9 @@ fn run_recording_session(
         Err(mpsc::error::TryRecvError::Empty) => false,
     };
 
+    let mut did_fallback = false;
     if should_fallback_to_ffmpeg(request, &outcome, stop_requested) {
+        did_fallback = true;
         tracing::warn!(
             backend = outcome.backend().label(),
             "Native recording startup failed; falling back to FFmpeg"
@@ -77,7 +89,7 @@ fn run_recording_session(
     }
 
     if !startup_notifier.is_acknowledged() {
-        startup_notifier.notify_error(startup_error_message(&outcome, request));
+        startup_notifier.notify_error(startup_error_message(&outcome, did_fallback));
     }
 
     match &outcome {
@@ -155,13 +167,10 @@ fn run_backend(
     }
 }
 
-fn startup_error_message(
-    outcome: &RecordingRunOutcome,
-    request: RecordingBackendRequest,
-) -> String {
+fn startup_error_message(outcome: &RecordingRunOutcome, did_fallback: bool) -> String {
     match outcome {
         RecordingRunOutcome::Failed { message, .. } => {
-            if matches!(request, RecordingBackendRequest::Auto) {
+            if did_fallback {
                 format!("Native recording and legacy FFmpeg fallback failed: {message}")
             } else {
                 message.clone()

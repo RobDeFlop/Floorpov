@@ -172,6 +172,18 @@ mod tests {
     }
 
     #[test]
+    fn forced_backend_selection_is_deterministic() {
+        assert_eq!(
+            initial_backend(RecordingBackendRequest::Native, "h264_nvenc"),
+            RecordingBackendKind::NativeWindows
+        );
+        assert_eq!(
+            initial_backend(RecordingBackendRequest::Ffmpeg, "auto"),
+            RecordingBackendKind::Ffmpeg
+        );
+    }
+
+    #[test]
     fn fallback_is_limited_to_unacknowledged_native_startup_failure() {
         assert!(should_fallback_to_ffmpeg(
             RecordingBackendRequest::Auto,
@@ -192,6 +204,25 @@ mod tests {
             RecordingBackendRequest::Auto,
             &native_startup_failure(false),
             true
+        ));
+        assert!(!should_fallback_to_ffmpeg(
+            RecordingBackendRequest::Auto,
+            &RecordingRunOutcome::Failed {
+                backend: RecordingBackendKind::NativeWindows,
+                phase: RecordingFailurePhase::Runtime,
+                message: "runtime failed".to_string(),
+                startup_acknowledged: true,
+            },
+            false
+        ));
+        assert!(!should_fallback_to_ffmpeg(
+            RecordingBackendRequest::Auto,
+            &RecordingRunOutcome::StoppedWithoutOutput {
+                backend: RecordingBackendKind::NativeWindows,
+                message: None,
+                startup_acknowledged: false,
+            },
+            false
         ));
     }
 }

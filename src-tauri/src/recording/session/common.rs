@@ -124,3 +124,35 @@ pub(super) fn resolve_stop_timeout(
         FFMPEG_STOP_TIMEOUT
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    #[test]
+    fn startup_notifier_only_sends_once() {
+        let (sender, receiver) = oneshot::channel();
+        let mut notifier = StartupNotifier::new(sender);
+        notifier.notify_success();
+        notifier.notify_error("late error".to_string());
+        assert!(notifier.is_acknowledged());
+        assert!(matches!(receiver.blocking_recv(), Ok(Ok(()))));
+    }
+
+    #[test]
+    fn clearing_state_allows_another_recording() {
+        let state = Arc::new(RwLock::new(super::super::super::model::RecordingState {
+            is_recording: true,
+            is_stopping: true,
+            current_output_path: Some("recording.mp4".to_string()),
+            stop_tx: None,
+        }));
+        clear_recording_state(&state);
+        let state = state.blocking_read();
+        assert!(!state.is_recording);
+        assert!(!state.is_stopping);
+        assert!(state.current_output_path.is_none());
+    }
+}
