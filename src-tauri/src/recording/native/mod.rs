@@ -4,8 +4,10 @@ mod timing;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use tauri::AppHandle;
@@ -17,8 +19,11 @@ use windows_capture::encoder::{
 use windows_sys::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
 use self::timing::{black_heartbeat_due, QpcClock, TimestampReservation};
+use super::audio_pipeline::{
+    run_audio_queue_to_consumer, run_system_audio_capture_to_queue_with_startup,
+};
 use super::backend::{RecordingBackendKind, RecordingFailurePhase, RecordingRunOutcome};
-use super::model::RecordingSessionConfig;
+use super::model::{AudioPipelineStats, RecordingSessionConfig, SYSTEM_AUDIO_QUEUE_CAPACITY};
 use super::segments::promote_output_file;
 use super::session::StartupNotifier;
 
@@ -106,6 +111,114 @@ fn cleanup_startup_encoder(encoder: &Arc<Mutex<Option<VideoEncoder>>>, path: &Pa
     remove_startup_output(path);
 }
 
+struct NativeAudioPipeline {
+    capture_stop_tx: std_mpsc::Sender<()>,
+    capture_thread: JoinHandle<Result<(), String>>,
+    consumer_thread: JoinHandle<Result<(), String>>,
+    error_rx: std_mpsc::Receiver<String>,
+    stats: Arc<AudioPipelineStats>,
+}
+
+impl NativeAudioPipeline {
+    fn start(encoder: Arc<Mutex<Option<VideoEncoder>>>) -> Result<Self, String> {
+        let (audio_tx, audio_rx) = std_mpsc::sync_channel::<Vec<u8>>(SYSTEM_AUDIO_QUEUE_CAPACITY);
+        let (capture_stop_tx, capture_stop_rx) = std_mpsc::channel();
+        let (startup_tx, startup_rx) = std_mpsc::channel();
+        let (error_tx, error_rx) = std_mpsc::channel();
+        let stats = Arc::new(AudioPipelineStats::default());
+
+        let consumer_stats = Arc::clone(&stats);
+        let consumer_error_tx = error_tx.clone();
+        let consumer_thread = thread::spawn(move || {
+            let result = run_audio_queue_to_consumer(audio_rx, consumer_stats, |chunk| {
+                let mut encoder_guard = encoder
+                    .lock()
+                    .map_err(|_| "Native encoder lock was poisoned by audio".to_string())?;
+                let encoder = encoder_guard
+                    .as_mut()
+                    .ok_or_else(|| "Native encoder closed before audio drained".to_string())?;
+                encoder
+                    .send_audio_buffer(chunk, 0)
+                    .map_err(|error| format!("Failed to submit native audio: {error}"))
+            });
+            if let Err(message) = &result {
+                let _ = consumer_error_tx.send(message.clone());
+            }
+            result
+        });
+
+        let capture_stats = Arc::clone(&stats);
+        let capture_thread = thread::spawn(move || {
+            let result = run_system_audio_capture_to_queue_with_startup(
+                audio_tx,
+                capture_stop_rx,
+                capture_stats,
+                Some(startup_tx),
+            );
+            if let Err(message) = &result {
+                let _ = error_tx.send(message.clone());
+            }
+            result
+        });
+
+        match startup_rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(Ok(())) => Ok(Self {
+                capture_stop_tx,
+                capture_thread,
+                consumer_thread,
+                error_rx,
+                stats,
+            }),
+            Ok(Err(message)) => {
+                let _ = capture_stop_tx.send(());
+                let _ = capture_thread.join();
+                let _ = consumer_thread.join();
+                Err(message)
+            }
+            Err(error) => {
+                let _ = capture_stop_tx.send(());
+                let _ = capture_thread.join();
+                let _ = consumer_thread.join();
+                Err(format!("System audio startup did not complete: {error}"))
+            }
+        }
+    }
+
+    fn runtime_error(&self) -> Option<String> {
+        self.error_rx.try_recv().ok()
+    }
+
+    fn stop(self) -> Result<(), String> {
+        if let Err(error) = self.capture_stop_tx.send(()) {
+            tracing::debug!("Native audio capture stop channel was closed: {error}");
+        }
+        let capture_result = match self.capture_thread.join() {
+            Ok(result) => result,
+            Err(error) => Err(format!("System audio capture thread panicked: {error:?}")),
+        };
+        let consumer_result = match self.consumer_thread.join() {
+            Ok(result) => result,
+            Err(error) => Err(format!("Native audio consumer thread panicked: {error:?}")),
+        };
+
+        tracing::info!(
+            backend = "native",
+            audio_chunks_queued = self.stats.queued_chunks.load(Ordering::Relaxed),
+            audio_chunks_written = self.stats.dequeued_chunks.load(Ordering::Relaxed),
+            audio_chunks_dropped = self.stats.dropped_chunks.load(Ordering::Relaxed),
+            "Native audio pipeline stopped"
+        );
+        capture_result.and(consumer_result)
+    }
+}
+
+fn stop_audio_pipeline(audio_pipeline: &mut Option<NativeAudioPipeline>) -> Result<(), String> {
+    match audio_pipeline.take() {
+        Some(pipeline) => pipeline.stop(),
+        None => Ok(()),
+    }
+}
+
 pub(crate) fn run_recording_session(
     _app_handle: &AppHandle,
     session_config: &RecordingSessionConfig,
@@ -170,6 +283,20 @@ fn run_encoder_session(
         return startup_failure(message);
     }
 
+    let mut audio_pipeline = if session_config.include_system_audio {
+        match NativeAudioPipeline::start(Arc::clone(&encoder)) {
+            Ok(pipeline) => Some(pipeline),
+            Err(message) => {
+                cleanup_startup_encoder(&encoder, &partial_path);
+                return startup_failure(format!(
+                    "System audio cannot initialize for native recording: {message}"
+                ));
+            }
+        }
+    } else {
+        None
+    };
+
     startup_notifier.notify_success();
     tracing::info!(
         backend = "native",
@@ -185,6 +312,14 @@ fn run_encoder_session(
 
     let mut last_black_timestamp = initial_timestamp;
     loop {
+        if let Some(message) = audio_pipeline
+            .as_ref()
+            .and_then(NativeAudioPipeline::runtime_error)
+        {
+            let _ = stop_audio_pipeline(&mut audio_pipeline);
+            return runtime_failure(message, &partial_path);
+        }
+
         match stop_rx.try_recv() {
             Ok(()) | Err(mpsc::error::TryRecvError::Disconnected) => break,
             Err(mpsc::error::TryRecvError::Empty) => {}
@@ -196,14 +331,22 @@ fn run_encoder_session(
                     Ok(true) => last_black_timestamp = timestamp,
                     Ok(false) => {}
                     Err(message) => {
+                        let _ = stop_audio_pipeline(&mut audio_pipeline);
                         return runtime_failure(message, &partial_path);
                     }
                 }
             }
             Ok(_) => {}
-            Err(message) => return runtime_failure(message, &partial_path),
+            Err(message) => {
+                let _ = stop_audio_pipeline(&mut audio_pipeline);
+                return runtime_failure(message, &partial_path);
+            }
         }
         thread::sleep(Duration::from_millis(25));
+    }
+
+    if let Err(message) = stop_audio_pipeline(&mut audio_pipeline) {
+        return runtime_failure(message, &partial_path);
     }
 
     if let Ok(timestamp) = clock.now_100ns() {
