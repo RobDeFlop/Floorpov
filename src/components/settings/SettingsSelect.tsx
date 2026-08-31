@@ -1,5 +1,15 @@
 import { Check, ChevronDown } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
+import { createPortal } from "react-dom";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactElement,
+} from "react";
 
 export interface SettingsSelectOption {
   value: string;
@@ -17,6 +27,10 @@ interface SettingsSelectProps {
   onChange: (value: string) => void;
 }
 
+const LISTBOX_GAP = 4;
+const LISTBOX_MAX_HEIGHT = 240;
+const VIEWPORT_PADDING = 8;
+
 export function SettingsSelect({
   id,
   value,
@@ -27,8 +41,14 @@ export function SettingsSelect({
   onChange,
 }: SettingsSelectProps): ReactElement {
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listboxRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const [listboxStyle, setListboxStyle] = useState<CSSProperties>({
+    position: "fixed",
+    visibility: "hidden",
+  });
   const listboxId = `${id}-listbox`;
   const enabledIndices = options.reduce<number[]>((indices, option, index) => {
     if (!option.disabled) {
@@ -52,7 +72,11 @@ export function SettingsSelect({
     }
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (
+        !containerRef.current?.contains(target) &&
+        !listboxRef.current?.contains(target)
+      ) {
         setIsOpen(false);
       }
     };
@@ -60,6 +84,61 @@ export function SettingsSelect({
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [isOpen]);
+
+  const updateListboxPosition = useCallback(() => {
+    const trigger = triggerRef.current;
+    const listbox = listboxRef.current;
+    if (!trigger || !listbox) {
+      return;
+    }
+
+    const triggerRect = trigger.getBoundingClientRect();
+    const listboxHeight = Math.min(listbox.scrollHeight, LISTBOX_MAX_HEIGHT);
+    const spaceBelow = window.innerHeight - triggerRect.bottom - LISTBOX_GAP - VIEWPORT_PADDING;
+    const spaceAbove = triggerRect.top - LISTBOX_GAP - VIEWPORT_PADDING;
+    const openAbove = spaceBelow < listboxHeight && spaceAbove > spaceBelow;
+    const availableHeight = Math.max(0, openAbove ? spaceAbove : spaceBelow);
+    const left = Math.min(
+      Math.max(VIEWPORT_PADDING, triggerRect.left),
+      Math.max(VIEWPORT_PADDING, window.innerWidth - triggerRect.width - VIEWPORT_PADDING),
+    );
+
+    setListboxStyle({
+      position: "fixed",
+      left,
+      width: triggerRect.width,
+      maxHeight: Math.min(LISTBOX_MAX_HEIGHT, availableHeight),
+      ...(openAbove
+        ? { bottom: window.innerHeight - triggerRect.top + LISTBOX_GAP }
+        : { top: triggerRect.bottom + LISTBOX_GAP }),
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (isOpen) {
+      updateListboxPosition();
+    }
+  }, [isOpen, options, updateListboxPosition]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handleViewportChange = (event: Event) => {
+      if (event.target instanceof Node && listboxRef.current?.contains(event.target)) {
+        return;
+      }
+      updateListboxPosition();
+    };
+
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+    return () => {
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [isOpen, updateListboxPosition]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -71,6 +150,12 @@ export function SettingsSelect({
       setActiveIndex(selectedIndex >= 0 && !options[selectedIndex]?.disabled ? selectedIndex : enabledIndices[0] ?? -1);
     }
   }, [activeIndex, enabledIndices, isOpen, options, selectedIndex]);
+
+  useEffect(() => {
+    if (isOpen && activeIndex >= 0) {
+      document.getElementById(`${id}-option-${activeIndex}`)?.scrollIntoView({ block: "nearest" });
+    }
+  }, [activeIndex, id, isOpen]);
 
   const openListbox = () => {
     if (disabled || enabledIndices.length === 0) {
@@ -150,6 +235,7 @@ export function SettingsSelect({
   return (
     <div ref={containerRef} className="relative">
       <button
+        ref={triggerRef}
         id={id}
         type="button"
         role="combobox"
@@ -167,12 +253,14 @@ export function SettingsSelect({
         <ChevronDown className={`h-4 w-4 shrink-0 text-neutral-400 transition-transform ${isOpen ? "rotate-180" : ""}`} aria-hidden="true" />
       </button>
 
-      {isOpen && (
+      {isOpen && createPortal(
         <div
+          ref={listboxRef}
           id={listboxId}
           role="listbox"
           aria-label={displayLabel}
-          className="absolute inset-x-0 top-full z-50 mt-1 max-h-60 overflow-y-auto rounded-sm border border-white/15 bg-(--surface-2) p-1 shadow-(--surface-glow)"
+          className="z-[200] overflow-y-auto rounded-sm border border-white/15 bg-(--surface-2) p-1 shadow-(--surface-glow)"
+          style={listboxStyle}
         >
           {options.map((option, index) => {
             const isSelected = option.value === value;
@@ -200,7 +288,8 @@ export function SettingsSelect({
               </div>
             );
           })}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
