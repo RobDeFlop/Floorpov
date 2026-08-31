@@ -1,7 +1,11 @@
 # Bundled FFmpeg Binary (Not Tracked in Git)
 
-FloorPoV uses a private FFmpeg binary for recording.
+FloorPoV uses a private FFmpeg binary for its legacy recording backend.
+FFmpeg remains the bundled production default while the native Windows backend is validated.
 The binary is bundled into app resources at build time, but it is not committed to git.
+
+Set `FLOORPOV_RECORDING_BACKEND=ffmpeg` to force this backend. See
+[`native-recording.md`](native-recording.md) for rollout and backend-selection details.
 
 ## Why this setup
 
