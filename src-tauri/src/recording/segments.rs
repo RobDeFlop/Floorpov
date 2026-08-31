@@ -65,23 +65,23 @@ fn write_concat_file(
     Ok(concat_path)
 }
 
-fn move_segment_to_final_output(segment_path: &Path, output_path: &str) -> Result<(), String> {
-    let output = PathBuf::from(output_path);
+pub(crate) fn promote_output_file(source_path: &Path, output_path: &Path) -> Result<(), String> {
+    let output = output_path.to_path_buf();
 
     if output.exists() {
         fs::remove_file(&output)
             .map_err(|error| format!("Failed to replace existing output recording: {error}"))?;
     }
 
-    match fs::rename(segment_path, &output) {
+    match fs::rename(source_path, &output) {
         Ok(()) => Ok(()),
         Err(rename_error) => {
-            fs::copy(segment_path, &output).map_err(|copy_error| {
+            fs::copy(source_path, &output).map_err(|copy_error| {
                 format!(
                     "Failed to move final segment into output recording. rename error: {rename_error}; copy error: {copy_error}"
                 )
             })?;
-            fs::remove_file(segment_path).map_err(|remove_error| {
+            fs::remove_file(source_path).map_err(|remove_error| {
                 format!("Failed to remove copied segment file after fallback copy: {remove_error}")
             })?;
             Ok(())
@@ -101,7 +101,7 @@ fn finalize_with_exact_segments(
     }
 
     if segment_paths.len() == 1 {
-        return move_segment_to_final_output(&segment_paths[0], output_path);
+        return promote_output_file(&segment_paths[0], Path::new(output_path));
     }
 
     let concat_path = write_concat_file(segment_workspace, segment_paths, segment_durations)?;
@@ -345,6 +345,36 @@ pub(crate) fn finalize_segmented_recording(
     Err(format!(
         "Failed to finalize recording after trying full/middle-drop/prefix/suffix concat strategies. Last error: {last_error}"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_promotion_replaces_existing_destination() -> Result<(), String> {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let directory = std::env::temp_dir().join(format!("floorpov-promote-{suffix}"));
+        fs::create_dir_all(&directory)
+            .map_err(|error| format!("Failed to create test directory: {error}"))?;
+        let source = directory.join("source.partial");
+        let destination = directory.join("recording.mp4");
+        fs::write(&source, b"new").map_err(|error| format!("Failed to write source: {error}"))?;
+        fs::write(&destination, b"old")
+            .map_err(|error| format!("Failed to write destination: {error}"))?;
+
+        promote_output_file(&source, &destination)?;
+
+        let promoted = fs::read(&destination)
+            .map_err(|error| format!("Failed to read destination: {error}"))?;
+        assert_eq!(promoted, b"new");
+        assert!(!source.exists());
+        fs::remove_dir_all(directory)
+            .map_err(|error| format!("Failed to remove test directory: {error}"))?;
+        Ok(())
+    }
 }
 
 pub(crate) fn cleanup_segment_workspace(segment_workspace: &Path) {

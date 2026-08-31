@@ -1,28 +1,311 @@
 //! Native Windows recording backend.
 
+mod timing;
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
 use tauri::AppHandle;
 use tokio::sync::mpsc;
+use windows_capture::encoder::{
+    AudioSettingsBuilder, ContainerSettingsBuilder, ContainerSettingsSubType, VideoEncoder,
+    VideoSettingsBuilder, VideoSettingsSubType,
+};
+use windows_sys::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
+use self::timing::{black_heartbeat_due, QpcClock, TimestampReservation};
 use super::backend::{RecordingBackendKind, RecordingFailurePhase, RecordingRunOutcome};
 use super::model::RecordingSessionConfig;
+use super::segments::promote_output_file;
 use super::session::StartupNotifier;
+
+struct WinRtMtaGuard;
+
+impl WinRtMtaGuard {
+    fn initialize() -> Result<Self, String> {
+        let result = unsafe { CoInitializeEx(std::ptr::null(), COINIT_MULTITHREADED as u32) };
+        if result < 0 {
+            return Err(format!(
+                "Failed to initialize the native recording thread as MTA: HRESULT {result:#x}"
+            ));
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for WinRtMtaGuard {
+    fn drop(&mut self) {
+        unsafe { CoUninitialize() };
+    }
+}
+
+fn native_partial_path(output_path: &str) -> PathBuf {
+    let mut path = PathBuf::from(output_path);
+    let partial_name = path
+        .file_name()
+        .map(|name| format!("{}.native-partial", name.to_string_lossy()))
+        .unwrap_or_else(|| "recording.mp4.native-partial".to_string());
+    path.set_file_name(partial_name);
+    path
+}
+
+fn create_black_frame(width: u32, height: u32) -> Result<Vec<u8>, String> {
+    let length = usize::try_from(width)
+        .ok()
+        .and_then(|value| value.checked_mul(height as usize))
+        .and_then(|value| value.checked_mul(4))
+        .ok_or_else(|| "Native black frame dimensions overflowed".to_string())?;
+    let mut frame = vec![0u8; length];
+    for alpha in frame.iter_mut().skip(3).step_by(4) {
+        *alpha = u8::MAX;
+    }
+    Ok(frame)
+}
+
+fn send_black_frame(
+    encoder: &Arc<Mutex<Option<VideoEncoder>>>,
+    timestamps: &mut TimestampReservation,
+    frame: &[u8],
+    timestamp: i64,
+) -> Result<bool, String> {
+    let Some(timestamp) = timestamps.reserve(timestamp) else {
+        return Ok(false);
+    };
+    let mut encoder_guard = encoder
+        .lock()
+        .map_err(|_| "Native encoder lock was poisoned".to_string())?;
+    let encoder = encoder_guard
+        .as_mut()
+        .ok_or_else(|| "Native encoder is no longer available".to_string())?;
+    encoder
+        .send_frame_buffer(frame, timestamp)
+        .map_err(|error| format!("Failed to submit native black frame: {error}"))?;
+    Ok(true)
+}
+
+fn remove_startup_output(path: &Path) {
+    if path.exists() {
+        if let Err(error) = fs::remove_file(path) {
+            tracing::warn!(
+                backend = "native",
+                output_path = %path.display(),
+                "Failed to remove native startup output: {error}"
+            );
+        }
+    }
+}
+
+fn cleanup_startup_encoder(encoder: &Arc<Mutex<Option<VideoEncoder>>>, path: &Path) {
+    let encoder = encoder.lock().ok().and_then(|mut guard| guard.take());
+    if let Some(encoder) = encoder {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| encoder.finish()));
+    }
+    remove_startup_output(path);
+}
 
 pub(crate) fn run_recording_session(
     _app_handle: &AppHandle,
-    _session_config: &RecordingSessionConfig,
-    _stop_rx: &mut mpsc::Receiver<()>,
-    _startup_notifier: &mut StartupNotifier,
+    session_config: &RecordingSessionConfig,
+    stop_rx: &mut mpsc::Receiver<()>,
+    startup_notifier: &mut StartupNotifier,
 ) -> RecordingRunOutcome {
+    run_encoder_session(session_config, stop_rx, startup_notifier)
+}
+
+fn run_encoder_session(
+    session_config: &RecordingSessionConfig,
+    stop_rx: &mut mpsc::Receiver<()>,
+    startup_notifier: &mut StartupNotifier,
+) -> RecordingRunOutcome {
+    let partial_path = native_partial_path(&session_config.output_path);
+    remove_startup_output(&partial_path);
+
+    let _mta_guard = match WinRtMtaGuard::initialize() {
+        Ok(guard) => guard,
+        Err(message) => return startup_failure(message),
+    };
+    let clock = match QpcClock::new() {
+        Ok(clock) => clock,
+        Err(message) => return startup_failure(message),
+    };
+    let black_frame =
+        match create_black_frame(session_config.capture_width, session_config.capture_height) {
+            Ok(frame) => frame,
+            Err(message) => return startup_failure(message),
+        };
+
+    let encoder = match VideoEncoder::new(
+        VideoSettingsBuilder::new(session_config.capture_width, session_config.capture_height)
+            .sub_type(VideoSettingsSubType::H264)
+            .bitrate(session_config.bitrate)
+            .frame_rate(session_config.frame_rate),
+        AudioSettingsBuilder::new().disabled(!session_config.include_system_audio),
+        ContainerSettingsBuilder::new().sub_type(ContainerSettingsSubType::MPEG4),
+        &partial_path,
+    ) {
+        Ok(encoder) => Arc::new(Mutex::new(Some(encoder))),
+        Err(error) => {
+            remove_startup_output(&partial_path);
+            return startup_failure(format!(
+                "Media Foundation encoder initialization failed: {error}"
+            ));
+        }
+    };
+
+    let mut timestamps = TimestampReservation::default();
+    let initial_timestamp = match clock.now_100ns() {
+        Ok(timestamp) => timestamp,
+        Err(message) => {
+            cleanup_startup_encoder(&encoder, &partial_path);
+            return startup_failure(message);
+        }
+    };
+    if let Err(message) =
+        send_black_frame(&encoder, &mut timestamps, &black_frame, initial_timestamp)
+    {
+        cleanup_startup_encoder(&encoder, &partial_path);
+        return startup_failure(message);
+    }
+
+    startup_notifier.notify_success();
+    tracing::info!(
+        backend = "native",
+        capture_source = "black",
+        output_path = %session_config.output_path,
+        width = session_config.capture_width,
+        height = session_config.capture_height,
+        frame_rate = session_config.frame_rate,
+        bitrate = session_config.bitrate,
+        include_system_audio = session_config.include_system_audio,
+        "Native encoder started"
+    );
+
+    let mut last_black_timestamp = initial_timestamp;
+    loop {
+        match stop_rx.try_recv() {
+            Ok(()) | Err(mpsc::error::TryRecvError::Disconnected) => break,
+            Err(mpsc::error::TryRecvError::Empty) => {}
+        }
+
+        match clock.now_100ns() {
+            Ok(timestamp) if black_heartbeat_due(last_black_timestamp, timestamp) => {
+                match send_black_frame(&encoder, &mut timestamps, &black_frame, timestamp) {
+                    Ok(true) => last_black_timestamp = timestamp,
+                    Ok(false) => {}
+                    Err(message) => {
+                        return runtime_failure(message, &partial_path);
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(message) => return runtime_failure(message, &partial_path),
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    if let Ok(timestamp) = clock.now_100ns() {
+        if let Err(message) = send_black_frame(&encoder, &mut timestamps, &black_frame, timestamp) {
+            return runtime_failure(message, &partial_path);
+        }
+    }
+
+    let encoder = match encoder.lock() {
+        Ok(mut guard) => guard.take(),
+        Err(_) => {
+            return runtime_failure(
+                "Native encoder lock was poisoned during finalization".to_string(),
+                &partial_path,
+            );
+        }
+    };
+    let Some(encoder) = encoder else {
+        return runtime_failure(
+            "Native encoder was missing during finalization".to_string(),
+            &partial_path,
+        );
+    };
+    let finish_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| encoder.finish()));
+    match finish_result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            return finalization_failure(
+                format!("Native output could not finalize: {error}"),
+                &partial_path,
+            );
+        }
+        Err(_) => {
+            return finalization_failure(
+                "Native encoder panicked during finalization".to_string(),
+                &partial_path,
+            );
+        }
+    }
+
+    if !partial_path
+        .metadata()
+        .is_ok_and(|metadata| metadata.len() > 0)
+    {
+        return finalization_failure(
+            "Native encoder produced an empty output".to_string(),
+            &partial_path,
+        );
+    }
+    if let Err(message) = promote_output_file(&partial_path, Path::new(&session_config.output_path))
+    {
+        return finalization_failure(message, &partial_path);
+    }
+
+    RecordingRunOutcome::Finalized {
+        backend: RecordingBackendKind::NativeWindows,
+    }
+}
+
+fn startup_failure(message: String) -> RecordingRunOutcome {
     RecordingRunOutcome::Failed {
         backend: RecordingBackendKind::NativeWindows,
         phase: RecordingFailurePhase::Startup,
-        message: "The native recording backend is not implemented yet".to_string(),
+        message,
         startup_acknowledged: false,
+    }
+}
+
+fn runtime_failure(message: String, partial_path: &Path) -> RecordingRunOutcome {
+    tracing::error!(
+        backend = "native",
+        phase = "runtime",
+        partial_path = %partial_path.display(),
+        "Native recording failed; partial output was retained: {message}"
+    );
+    RecordingRunOutcome::Failed {
+        backend: RecordingBackendKind::NativeWindows,
+        phase: RecordingFailurePhase::Runtime,
+        message,
+        startup_acknowledged: true,
+    }
+}
+
+fn finalization_failure(message: String, partial_path: &Path) -> RecordingRunOutcome {
+    tracing::error!(
+        backend = "native",
+        phase = "finalization",
+        partial_path = %partial_path.display(),
+        "Native recording finalization failed; partial output was retained: {message}"
+    );
+    RecordingRunOutcome::Failed {
+        backend: RecordingBackendKind::NativeWindows,
+        phase: RecordingFailurePhase::Finalization,
+        message,
+        startup_acknowledged: true,
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use std::fs;
     use std::sync::mpsc;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -39,27 +322,6 @@ mod tests {
         ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
         MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
     };
-    use windows_sys::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
-
-    struct ComGuard;
-
-    impl ComGuard {
-        fn initialize_mta() -> Result<Self, String> {
-            let result = unsafe { CoInitializeEx(std::ptr::null(), COINIT_MULTITHREADED as u32) };
-            if result < 0 {
-                return Err(format!(
-                    "Failed to initialize the native encoder thread as MTA: HRESULT {result:#x}"
-                ));
-            }
-            Ok(Self)
-        }
-    }
-
-    impl Drop for ComGuard {
-        fn drop(&mut self) {
-            unsafe { CoUninitialize() };
-        }
-    }
 
     fn temporary_mp4_path(test_name: &str) -> std::path::PathBuf {
         let suffix = SystemTime::now()
@@ -69,22 +331,63 @@ mod tests {
     }
 
     #[test]
+    fn black_frame_has_expected_size_and_opaque_alpha() {
+        let frame = create_black_frame(2, 2).expect("small black frame should fit");
+        assert_eq!(frame.len(), 16);
+        assert!(frame.chunks_exact(4).all(|pixel| pixel == [0, 0, 0, 255]));
+        assert!(create_black_frame(u32::MAX, u32::MAX).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires Windows Media Foundation H.264 support"]
+    fn native_black_recording_session() -> Result<(), String> {
+        let output_path = temporary_mp4_path("native-black-recording-session");
+        let output_path_string = output_path.to_string_lossy().to_string();
+        let session_config = RecordingSessionConfig {
+            output_path: output_path_string,
+            video_quality: "balanced".to_string(),
+            video_encoder_preference: "auto".to_string(),
+            frame_rate: 30,
+            bitrate: 2_000_000,
+            capture_input: super::super::model::CaptureInput::Monitor,
+            capture_width: 640,
+            capture_height: 360,
+            include_system_audio: false,
+            enable_diagnostics: false,
+        };
+        let (stop_tx, mut stop_rx) = tokio::sync::mpsc::channel(1);
+        stop_tx
+            .try_send(())
+            .map_err(|error| format!("Failed to queue test stop: {error}"))?;
+        let (startup_tx, startup_rx) = tokio::sync::oneshot::channel();
+        let mut startup_notifier = StartupNotifier::new(startup_tx);
+
+        let outcome = run_encoder_session(&session_config, &mut stop_rx, &mut startup_notifier);
+
+        assert!(matches!(
+            outcome,
+            RecordingRunOutcome::Finalized {
+                backend: RecordingBackendKind::NativeWindows
+            }
+        ));
+        assert!(matches!(startup_rx.blocking_recv(), Ok(Ok(()))));
+        assert!(output_path
+            .metadata()
+            .is_ok_and(|metadata| metadata.len() > 0));
+        fs::remove_file(output_path)
+            .map_err(|error| format!("Failed to remove native session test output: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
     #[ignore = "requires Windows Media Foundation H.264/AAC support"]
     fn native_encoder_black_video() -> Result<(), String> {
-        let _com_guard = ComGuard::initialize_mta()?;
+        let _com_guard = WinRtMtaGuard::initialize()?;
         let output_path = temporary_mp4_path("native-encoder-black-video");
         let width = 640u32;
         let height = 360u32;
         let frame_rate = 30u32;
-        let buffer_length = usize::try_from(width)
-            .ok()
-            .and_then(|value| value.checked_mul(height as usize))
-            .and_then(|value| value.checked_mul(4))
-            .ok_or_else(|| "Black frame dimensions overflowed".to_string())?;
-        let mut black_frame = vec![0u8; buffer_length];
-        for alpha in black_frame.iter_mut().skip(3).step_by(4) {
-            *alpha = u8::MAX;
-        }
+        let black_frame = create_black_frame(width, height)?;
 
         let mut encoder = VideoEncoder::new(
             VideoSettingsBuilder::new(width, height)
