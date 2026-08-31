@@ -132,6 +132,28 @@ fn cleanup_startup_encoder(encoder: &Arc<Mutex<Option<VideoEncoder>>>, path: &Pa
     remove_startup_output(path);
 }
 
+struct NativeEncoderOwner {
+    encoder: Arc<Mutex<Option<VideoEncoder>>>,
+    partial_path: PathBuf,
+}
+
+impl Drop for NativeEncoderOwner {
+    fn drop(&mut self) {
+        let encoder = self.encoder.lock().ok().and_then(|mut guard| guard.take());
+        if let Some(encoder) = encoder {
+            let finish_result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| encoder.finish()));
+            if !matches!(finish_result, Ok(Ok(()))) {
+                tracing::error!(
+                    backend = "native",
+                    partial_path = %self.partial_path.display(),
+                    "Native partial output could not be finalized during failure cleanup"
+                );
+            }
+        }
+    }
+}
+
 struct NativeAudioPipeline {
     capture_stop_tx: std_mpsc::Sender<()>,
     capture_thread: JoinHandle<Result<(), String>>,
@@ -350,6 +372,10 @@ fn run_encoder_session(
                 "Media Foundation encoder initialization failed: {error}"
             ));
         }
+    };
+    let _encoder_owner = NativeEncoderOwner {
+        encoder: Arc::clone(&encoder),
+        partial_path: partial_path.clone(),
     };
 
     let timestamps = Arc::new(Mutex::new(TimestampReservation::default()));
