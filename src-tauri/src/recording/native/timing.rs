@@ -56,13 +56,18 @@ impl TimestampReservation {
 
 pub(super) struct FrameGate {
     target_interval_100ns: i64,
+    jitter_tolerance_100ns: i64,
+    next_due_timestamp: Option<i64>,
     last_accepted_timestamp: Option<i64>,
 }
 
 impl FrameGate {
     pub(super) fn new(frame_rate: u32) -> Self {
+        let target_interval_100ns = (TICKS_PER_SECOND_100NS / i64::from(frame_rate.max(1))).max(1);
         Self {
-            target_interval_100ns: TICKS_PER_SECOND_100NS / i64::from(frame_rate.max(1)),
+            target_interval_100ns,
+            jitter_tolerance_100ns: target_interval_100ns / 2,
+            next_due_timestamp: None,
             last_accepted_timestamp: None,
         }
     }
@@ -70,10 +75,28 @@ impl FrameGate {
     pub(super) fn accept(&mut self, timestamp: i64) -> bool {
         if self
             .last_accepted_timestamp
-            .is_some_and(|last| timestamp <= last || timestamp - last < self.target_interval_100ns)
+            .is_some_and(|last| timestamp <= last)
         {
             return false;
         }
+
+        let Some(next_due) = self.next_due_timestamp else {
+            self.last_accepted_timestamp = Some(timestamp);
+            self.next_due_timestamp = Some(timestamp.saturating_add(self.target_interval_100ns));
+            return true;
+        };
+        if timestamp.saturating_add(self.jitter_tolerance_100ns) < next_due {
+            return false;
+        }
+
+        let intervals_elapsed = timestamp
+            .saturating_sub(next_due)
+            .max(0)
+            .saturating_div(self.target_interval_100ns)
+            .saturating_add(1);
+        self.next_due_timestamp = Some(
+            next_due.saturating_add(self.target_interval_100ns.saturating_mul(intervals_elapsed)),
+        );
         self.last_accepted_timestamp = Some(timestamp);
         true
     }
@@ -107,12 +130,22 @@ mod tests {
     }
 
     #[test]
-    fn frame_gate_limits_maximum_cadence() {
+    fn frame_gate_limits_average_cadence() {
         let mut gate = FrameGate::new(30);
-        assert!(gate.accept(1_000_000));
-        assert!(!gate.accept(1_200_000));
-        assert!(gate.accept(1_333_333));
-        assert!(!gate.accept(1_333_333));
+        let accepted = (0..=100)
+            .filter(|step| gate.accept(i64::from(*step) * 100_000))
+            .count();
+        assert!(accepted <= 31);
+        assert!(!gate.accept(10_000_000));
+    }
+
+    #[test]
+    fn frame_gate_tolerates_bursty_delivery_below_target_average() {
+        let mut gate = FrameGate::new(60);
+        let timestamps = [0, 100_000, 360_000, 460_000, 720_000];
+        assert!(timestamps
+            .into_iter()
+            .all(|timestamp| gate.accept(timestamp)));
     }
 
     #[test]
