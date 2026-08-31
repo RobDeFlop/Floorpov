@@ -9,6 +9,8 @@ use super::model::{
 };
 
 #[cfg(target_os = "windows")]
+use windows_capture::monitor::Monitor;
+#[cfg(target_os = "windows")]
 use windows_sys::core::BOOL;
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT};
@@ -321,6 +323,17 @@ pub(crate) fn resolve_window_capture_region(
 pub(crate) fn resolve_capture_dimensions(capture_input: &CaptureInput) -> (u32, u32) {
     #[cfg(target_os = "windows")]
     {
+        if matches!(capture_input, CaptureInput::Monitor) {
+            match Monitor::primary().and_then(|monitor| Ok((monitor.width()?, monitor.height()?))) {
+                Ok((width, height)) => return sanitize_capture_dimensions(width, height),
+                Err(error) => {
+                    tracing::warn!(
+                        "Failed to resolve primary monitor dimensions; using defaults: {error}"
+                    );
+                }
+            }
+        }
+
         if let CaptureInput::Window { .. } = capture_input {
             if let Ok(region) = resolve_window_capture_region(capture_input) {
                 return (region.width, region.height);

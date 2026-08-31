@@ -1,5 +1,6 @@
 //! Native Windows recording backend.
 
+mod capture;
 mod timing;
 
 use std::fs;
@@ -18,12 +19,17 @@ use windows_capture::encoder::{
 };
 use windows_sys::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
-use self::timing::{black_heartbeat_due, QpcClock, TimestampReservation};
+use self::capture::{
+    start_monitor_capture, CaptureEvent, CaptureShared, CaptureStats, NativeCaptureControl,
+};
+use self::timing::{black_heartbeat_due, FrameGate, QpcClock, TimestampReservation};
 use super::audio_pipeline::{
     run_audio_queue_to_consumer, run_system_audio_capture_to_queue_with_startup,
 };
 use super::backend::{RecordingBackendKind, RecordingFailurePhase, RecordingRunOutcome};
-use super::model::{AudioPipelineStats, RecordingSessionConfig, SYSTEM_AUDIO_QUEUE_CAPACITY};
+use super::model::{
+    AudioPipelineStats, CaptureInput, RecordingSessionConfig, SYSTEM_AUDIO_QUEUE_CAPACITY,
+};
 use super::segments::promote_output_file;
 use super::session::StartupNotifier;
 
@@ -72,11 +78,19 @@ fn create_black_frame(width: u32, height: u32) -> Result<Vec<u8>, String> {
 
 fn send_black_frame(
     encoder: &Arc<Mutex<Option<VideoEncoder>>>,
-    timestamps: &mut TimestampReservation,
+    submission_lock: &Arc<Mutex<()>>,
+    timestamps: &Arc<Mutex<TimestampReservation>>,
     frame: &[u8],
     timestamp: i64,
 ) -> Result<bool, String> {
-    let Some(timestamp) = timestamps.reserve(timestamp) else {
+    let _submission_guard = submission_lock
+        .lock()
+        .map_err(|_| "Native submission lock was poisoned".to_string())?;
+    let reserved_timestamp = timestamps
+        .lock()
+        .map_err(|_| "Native timestamp lock was poisoned".to_string())?
+        .reserve(timestamp);
+    let Some(timestamp) = reserved_timestamp else {
         return Ok(false);
     };
     let mut encoder_guard = encoder
@@ -219,6 +233,60 @@ fn stop_audio_pipeline(audio_pipeline: &mut Option<NativeAudioPipeline>) -> Resu
     }
 }
 
+struct ActiveCapture {
+    control: NativeCaptureControl,
+    event_rx: std_mpsc::Receiver<CaptureEvent>,
+    stats: Arc<CaptureStats>,
+}
+
+impl ActiveCapture {
+    fn runtime_error(&self) -> Option<String> {
+        loop {
+            match self.event_rx.try_recv() {
+                Ok(CaptureEvent::FirstFrame) => {}
+                Ok(CaptureEvent::Closed) => {
+                    return Some("Native capture source closed unexpectedly".to_string());
+                }
+                Err(std_mpsc::TryRecvError::Empty) => break,
+                Err(std_mpsc::TryRecvError::Disconnected) => {
+                    if self.control.is_finished() {
+                        return Some("Native capture thread ended unexpectedly".to_string());
+                    }
+                    break;
+                }
+            }
+        }
+        if self.control.is_finished() {
+            Some("Native capture thread ended unexpectedly".to_string())
+        } else {
+            None
+        }
+    }
+
+    fn stop(self) -> Result<(), String> {
+        let result = self
+            .control
+            .stop()
+            .map_err(|error| format!("Failed to stop native capture: {error}"));
+        tracing::info!(
+            backend = "native",
+            captured_frames = self.stats.captured_frames.load(Ordering::Relaxed),
+            accepted_frames = self.stats.accepted_frames.load(Ordering::Relaxed),
+            dropped_frames = self.stats.dropped_frames.load(Ordering::Relaxed),
+            submission_failures = self.stats.submission_failures.load(Ordering::Relaxed),
+            "Native capture stopped"
+        );
+        result
+    }
+}
+
+fn stop_capture(active_capture: &mut Option<ActiveCapture>) -> Result<(), String> {
+    match active_capture.take() {
+        Some(capture) => capture.stop(),
+        None => Ok(()),
+    }
+}
+
 pub(crate) fn run_recording_session(
     _app_handle: &AppHandle,
     session_config: &RecordingSessionConfig,
@@ -268,7 +336,8 @@ fn run_encoder_session(
         }
     };
 
-    let mut timestamps = TimestampReservation::default();
+    let timestamps = Arc::new(Mutex::new(TimestampReservation::default()));
+    let submission_lock = Arc::new(Mutex::new(()));
     let initial_timestamp = match clock.now_100ns() {
         Ok(timestamp) => timestamp,
         Err(message) => {
@@ -276,9 +345,13 @@ fn run_encoder_session(
             return startup_failure(message);
         }
     };
-    if let Err(message) =
-        send_black_frame(&encoder, &mut timestamps, &black_frame, initial_timestamp)
-    {
+    if let Err(message) = send_black_frame(
+        &encoder,
+        &submission_lock,
+        &timestamps,
+        &black_frame,
+        initial_timestamp,
+    ) {
         cleanup_startup_encoder(&encoder, &partial_path);
         return startup_failure(message);
     }
@@ -297,10 +370,45 @@ fn run_encoder_session(
         None
     };
 
+    let capture_stats = Arc::new(CaptureStats::default());
+    let capture_shared = CaptureShared {
+        encoder: Arc::clone(&encoder),
+        submission_lock: Arc::clone(&submission_lock),
+        timestamps: Arc::clone(&timestamps),
+        frame_gate: Arc::new(Mutex::new(FrameGate::new(session_config.frame_rate))),
+        clock,
+        output_width: session_config.capture_width,
+        output_height: session_config.capture_height,
+        enable_diagnostics: session_config.enable_diagnostics,
+        stats: Arc::clone(&capture_stats),
+    };
+    let mut active_capture = match &session_config.capture_input {
+        CaptureInput::Monitor => {
+            match start_monitor_capture(capture_shared, session_config.frame_rate) {
+                Ok((control, event_rx)) => Some(ActiveCapture {
+                    control,
+                    event_rx,
+                    stats: capture_stats,
+                }),
+                Err(message) => {
+                    let _ = stop_audio_pipeline(&mut audio_pipeline);
+                    cleanup_startup_encoder(&encoder, &partial_path);
+                    return startup_failure(message);
+                }
+            }
+        }
+        CaptureInput::Window { .. } => None,
+    };
+    let capture_source = if active_capture.is_some() {
+        "monitor"
+    } else {
+        "black"
+    };
+
     startup_notifier.notify_success();
     tracing::info!(
         backend = "native",
-        capture_source = "black",
+        capture_source,
         output_path = %session_config.output_path,
         width = session_config.capture_width,
         height = session_config.capture_height,
@@ -312,10 +420,20 @@ fn run_encoder_session(
 
     let mut last_black_timestamp = initial_timestamp;
     loop {
+        if let Some(message) = active_capture
+            .as_ref()
+            .and_then(ActiveCapture::runtime_error)
+        {
+            let _ = stop_capture(&mut active_capture);
+            let _ = stop_audio_pipeline(&mut audio_pipeline);
+            return runtime_failure(message, &partial_path);
+        }
+
         if let Some(message) = audio_pipeline
             .as_ref()
             .and_then(NativeAudioPipeline::runtime_error)
         {
+            let _ = stop_capture(&mut active_capture);
             let _ = stop_audio_pipeline(&mut audio_pipeline);
             return runtime_failure(message, &partial_path);
         }
@@ -326,8 +444,17 @@ fn run_encoder_session(
         }
 
         match clock.now_100ns() {
-            Ok(timestamp) if black_heartbeat_due(last_black_timestamp, timestamp) => {
-                match send_black_frame(&encoder, &mut timestamps, &black_frame, timestamp) {
+            Ok(timestamp)
+                if active_capture.is_none()
+                    && black_heartbeat_due(last_black_timestamp, timestamp) =>
+            {
+                match send_black_frame(
+                    &encoder,
+                    &submission_lock,
+                    &timestamps,
+                    &black_frame,
+                    timestamp,
+                ) {
                     Ok(true) => last_black_timestamp = timestamp,
                     Ok(false) => {}
                     Err(message) => {
@@ -338,6 +465,7 @@ fn run_encoder_session(
             }
             Ok(_) => {}
             Err(message) => {
+                let _ = stop_capture(&mut active_capture);
                 let _ = stop_audio_pipeline(&mut audio_pipeline);
                 return runtime_failure(message, &partial_path);
             }
@@ -345,13 +473,23 @@ fn run_encoder_session(
         thread::sleep(Duration::from_millis(25));
     }
 
-    if let Err(message) = stop_audio_pipeline(&mut audio_pipeline) {
+    let capture_stop_result = stop_capture(&mut active_capture);
+    let audio_stop_result = stop_audio_pipeline(&mut audio_pipeline);
+    if let Err(message) = capture_stop_result.and(audio_stop_result) {
         return runtime_failure(message, &partial_path);
     }
 
-    if let Ok(timestamp) = clock.now_100ns() {
-        if let Err(message) = send_black_frame(&encoder, &mut timestamps, &black_frame, timestamp) {
-            return runtime_failure(message, &partial_path);
+    if matches!(&session_config.capture_input, CaptureInput::Window { .. }) {
+        if let Ok(timestamp) = clock.now_100ns() {
+            if let Err(message) = send_black_frame(
+                &encoder,
+                &submission_lock,
+                &timestamps,
+                &black_frame,
+                timestamp,
+            ) {
+                return runtime_failure(message, &partial_path);
+            }
         }
     }
 
@@ -492,7 +630,12 @@ mod tests {
             video_encoder_preference: "auto".to_string(),
             frame_rate: 30,
             bitrate: 2_000_000,
-            capture_input: super::super::model::CaptureInput::Monitor,
+            capture_input: super::super::model::CaptureInput::Window {
+                input_target: "test-window".to_string(),
+                window_hwnd: None,
+                window_title: None,
+                use_wgc: true,
+            },
             capture_width: 640,
             capture_height: 360,
             include_system_audio: false,
@@ -519,6 +662,54 @@ mod tests {
             .is_ok_and(|metadata| metadata.len() > 0));
         fs::remove_file(output_path)
             .map_err(|error| format!("Failed to remove native session test output: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires an interactive Windows desktop and Media Foundation H.264 support"]
+    fn native_monitor_recording_session() -> Result<(), String> {
+        let monitor = Monitor::primary()
+            .map_err(|error| format!("Failed to resolve primary monitor: {error}"))?;
+        let width = monitor
+            .width()
+            .map_err(|error| format!("Failed to read monitor width: {error}"))?;
+        let height = monitor
+            .height()
+            .map_err(|error| format!("Failed to read monitor height: {error}"))?;
+        let output_path = temporary_mp4_path("native-monitor-recording-session");
+        let session_config = RecordingSessionConfig {
+            output_path: output_path.to_string_lossy().to_string(),
+            video_quality: "balanced".to_string(),
+            video_encoder_preference: "auto".to_string(),
+            frame_rate: 30,
+            bitrate: 5_000_000,
+            capture_input: super::super::model::CaptureInput::Monitor,
+            capture_width: width,
+            capture_height: height,
+            include_system_audio: false,
+            enable_diagnostics: false,
+        };
+        let (stop_tx, mut stop_rx) = tokio::sync::mpsc::channel(1);
+        let stop_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_secs(1));
+            stop_tx.blocking_send(())
+        });
+        let (startup_tx, startup_rx) = tokio::sync::oneshot::channel();
+        let mut startup_notifier = StartupNotifier::new(startup_tx);
+
+        let outcome = run_encoder_session(&session_config, &mut stop_rx, &mut startup_notifier);
+
+        stop_thread
+            .join()
+            .map_err(|error| format!("Monitor test stop thread panicked: {error:?}"))?
+            .map_err(|error| format!("Failed to stop monitor test: {error}"))?;
+        assert!(matches!(startup_rx.blocking_recv(), Ok(Ok(()))));
+        assert!(matches!(outcome, RecordingRunOutcome::Finalized { .. }));
+        assert!(output_path
+            .metadata()
+            .is_ok_and(|metadata| metadata.len() > 0));
+        fs::remove_file(output_path)
+            .map_err(|error| format!("Failed to remove monitor test output: {error}"))?;
         Ok(())
     }
 

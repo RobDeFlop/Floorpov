@@ -5,6 +5,7 @@ use windows_sys::Win32::System::Performance::{QueryPerformanceCounter, QueryPerf
 pub(super) const TICKS_PER_SECOND_100NS: i64 = 10_000_000;
 pub(super) const BLACK_HEARTBEAT_INTERVAL_100NS: i64 = 5_000_000;
 
+#[derive(Clone, Copy)]
 pub(super) struct QpcClock {
     frequency: i64,
 }
@@ -53,13 +54,11 @@ impl TimestampReservation {
     }
 }
 
-#[allow(dead_code)]
 pub(super) struct FrameGate {
     target_interval_100ns: i64,
     last_accepted_timestamp: Option<i64>,
 }
 
-#[allow(dead_code)]
 impl FrameGate {
     pub(super) fn new(frame_rate: u32) -> Self {
         Self {
