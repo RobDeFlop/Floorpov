@@ -5,11 +5,11 @@ mod timing;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 use tokio::sync::mpsc;
@@ -20,7 +20,8 @@ use windows_capture::encoder::{
 use windows_sys::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
 use self::capture::{
-    start_monitor_capture, CaptureEvent, CaptureShared, CaptureStats, NativeCaptureControl,
+    start_monitor_capture, start_window_capture, CaptureEvent, CaptureShared, CaptureStats,
+    NativeCaptureControl,
 };
 use self::timing::{black_heartbeat_due, FrameGate, QpcClock, TimestampReservation};
 use super::audio_pipeline::{
@@ -28,10 +29,16 @@ use super::audio_pipeline::{
 };
 use super::backend::{RecordingBackendKind, RecordingFailurePhase, RecordingRunOutcome};
 use super::model::{
-    AudioPipelineStats, CaptureInput, RecordingSessionConfig, SYSTEM_AUDIO_QUEUE_CAPACITY,
+    AudioPipelineStats, CaptureInput, RecordingSessionConfig, WindowCaptureAvailability,
+    SYSTEM_AUDIO_QUEUE_CAPACITY, WINDOW_CAPTURE_STATUS_POLL_INTERVAL,
+    WINDOW_CAPTURE_UNAVAILABLE_WARNING,
 };
 use super::segments::promote_output_file;
-use super::session::StartupNotifier;
+use super::session::{emit_recording_warning, emit_recording_warning_cleared, StartupNotifier};
+use super::window_capture::{
+    evaluate_window_capture_availability, resolve_window_capture_handle,
+    warning_message_for_window_capture,
+};
 
 struct WinRtMtaGuard;
 
@@ -240,26 +247,16 @@ struct ActiveCapture {
 }
 
 impl ActiveCapture {
-    fn runtime_error(&self) -> Option<String> {
-        loop {
-            match self.event_rx.try_recv() {
-                Ok(CaptureEvent::FirstFrame) => {}
-                Ok(CaptureEvent::Closed) => {
-                    return Some("Native capture source closed unexpectedly".to_string());
-                }
-                Err(std_mpsc::TryRecvError::Empty) => break,
-                Err(std_mpsc::TryRecvError::Disconnected) => {
-                    if self.control.is_finished() {
-                        return Some("Native capture thread ended unexpectedly".to_string());
-                    }
-                    break;
-                }
+    fn next_event(&self) -> Result<Option<CaptureEvent>, String> {
+        match self.event_rx.try_recv() {
+            Ok(event) => Ok(Some(event)),
+            Err(std_mpsc::TryRecvError::Empty) if self.control.is_finished() => {
+                Err("Native capture thread ended unexpectedly".to_string())
             }
-        }
-        if self.control.is_finished() {
-            Some("Native capture thread ended unexpectedly".to_string())
-        } else {
-            None
+            Err(std_mpsc::TryRecvError::Disconnected) => {
+                Err("Native capture event channel disconnected".to_string())
+            }
+            Err(std_mpsc::TryRecvError::Empty) => Ok(None),
         }
     }
 
@@ -287,16 +284,35 @@ fn stop_capture(active_capture: &mut Option<ActiveCapture>) -> Result<(), String
     }
 }
 
+fn update_window_warning(
+    app_handle: Option<&AppHandle>,
+    active_warning: &mut Option<&'static str>,
+    next_warning: Option<&'static str>,
+) {
+    if *active_warning == next_warning {
+        return;
+    }
+    if let Some(app_handle) = app_handle {
+        if let Some(message) = next_warning {
+            emit_recording_warning(app_handle, message);
+        } else {
+            emit_recording_warning_cleared(app_handle);
+        }
+    }
+    *active_warning = next_warning;
+}
+
 pub(crate) fn run_recording_session(
-    _app_handle: &AppHandle,
+    app_handle: &AppHandle,
     session_config: &RecordingSessionConfig,
     stop_rx: &mut mpsc::Receiver<()>,
     startup_notifier: &mut StartupNotifier,
 ) -> RecordingRunOutcome {
-    run_encoder_session(session_config, stop_rx, startup_notifier)
+    run_encoder_session(Some(app_handle), session_config, stop_rx, startup_notifier)
 }
 
 fn run_encoder_session(
+    app_handle: Option<&AppHandle>,
     session_config: &RecordingSessionConfig,
     stop_rx: &mut mpsc::Receiver<()>,
     startup_notifier: &mut StartupNotifier,
@@ -380,16 +396,56 @@ fn run_encoder_session(
         output_width: session_config.capture_width,
         output_height: session_config.capture_height,
         enable_diagnostics: session_config.enable_diagnostics,
+        dimension_warning_sent: Arc::new(AtomicBool::new(false)),
+        diagnostic_delta_logged: Arc::new(AtomicBool::new(false)),
         stats: Arc::clone(&capture_stats),
+    };
+    let is_window_capture = matches!(&session_config.capture_input, CaptureInput::Window { .. });
+    let initial_window_availability =
+        evaluate_window_capture_availability(&session_config.capture_input);
+    let mut last_window_hwnd = match &session_config.capture_input {
+        CaptureInput::Window { window_hwnd, .. } => *window_hwnd,
+        CaptureInput::Monitor => None,
     };
     let mut active_capture = match &session_config.capture_input {
         CaptureInput::Monitor => {
-            match start_monitor_capture(capture_shared, session_config.frame_rate) {
+            match start_monitor_capture(capture_shared.clone(), session_config.frame_rate) {
                 Ok((control, event_rx)) => Some(ActiveCapture {
                     control,
                     event_rx,
-                    stats: capture_stats,
+                    stats: Arc::clone(&capture_stats),
                 }),
+                Err(message) => {
+                    let _ = stop_audio_pipeline(&mut audio_pipeline);
+                    cleanup_startup_encoder(&encoder, &partial_path);
+                    return startup_failure(message);
+                }
+            }
+        }
+        CaptureInput::Window { .. }
+            if initial_window_availability == WindowCaptureAvailability::Available =>
+        {
+            let window_hwnd = match resolve_window_capture_handle(&session_config.capture_input) {
+                Ok(hwnd) => hwnd,
+                Err(message) => {
+                    let _ = stop_audio_pipeline(&mut audio_pipeline);
+                    cleanup_startup_encoder(&encoder, &partial_path);
+                    return startup_failure(message);
+                }
+            };
+            match start_window_capture(
+                window_hwnd,
+                capture_shared.clone(),
+                session_config.frame_rate,
+            ) {
+                Ok((control, event_rx)) => {
+                    last_window_hwnd = Some(window_hwnd);
+                    Some(ActiveCapture {
+                        control,
+                        event_rx,
+                        stats: Arc::clone(&capture_stats),
+                    })
+                }
                 Err(message) => {
                     let _ = stop_audio_pipeline(&mut audio_pipeline);
                     cleanup_startup_encoder(&encoder, &partial_path);
@@ -399,11 +455,20 @@ fn run_encoder_session(
         }
         CaptureInput::Window { .. } => None,
     };
-    let capture_source = if active_capture.is_some() {
-        "monitor"
-    } else {
-        "black"
+    let capture_source = match (&session_config.capture_input, active_capture.is_some()) {
+        (CaptureInput::Monitor, true) => "monitor",
+        (CaptureInput::Window { .. }, true) => "window",
+        _ => "black",
     };
+    let mut active_window_warning = if is_window_capture && active_capture.is_none() {
+        warning_message_for_window_capture(initial_window_availability)
+            .or(Some(WINDOW_CAPTURE_UNAVAILABLE_WARNING))
+    } else {
+        None
+    };
+    if let (Some(app_handle), Some(message)) = (app_handle, active_window_warning) {
+        emit_recording_warning(app_handle, message);
+    }
 
     startup_notifier.notify_success();
     tracing::info!(
@@ -419,14 +484,76 @@ fn run_encoder_session(
     );
 
     let mut last_black_timestamp = initial_timestamp;
+    let mut window_status_checked_at = Instant::now();
+    let mut window_retry_at = Instant::now();
+    let mut window_retry_delay = Duration::from_millis(250);
+    let mut recovered_hwnd_logged = false;
     loop {
-        if let Some(message) = active_capture
-            .as_ref()
-            .and_then(ActiveCapture::runtime_error)
-        {
-            let _ = stop_capture(&mut active_capture);
-            let _ = stop_audio_pipeline(&mut audio_pipeline);
-            return runtime_failure(message, &partial_path);
+        let capture_event = match active_capture.as_ref() {
+            Some(capture) => capture.next_event(),
+            None => Ok(None),
+        };
+        match capture_event {
+            Ok(Some(CaptureEvent::FirstFrame)) if is_window_capture => {
+                update_window_warning(app_handle, &mut active_window_warning, None);
+                window_retry_delay = Duration::from_millis(250);
+            }
+            Ok(Some(CaptureEvent::FirstFrame)) | Ok(None) => {}
+            Ok(Some(CaptureEvent::Closed)) if is_window_capture => {
+                if let Err(error) = stop_capture(&mut active_capture) {
+                    tracing::debug!(
+                        backend = "native",
+                        "Closed window capture join returned: {error}"
+                    );
+                }
+                update_window_warning(
+                    app_handle,
+                    &mut active_window_warning,
+                    Some(WINDOW_CAPTURE_UNAVAILABLE_WARNING),
+                );
+                if let Ok(timestamp) = clock.now_100ns() {
+                    match send_black_frame(
+                        &encoder,
+                        &submission_lock,
+                        &timestamps,
+                        &black_frame,
+                        timestamp,
+                    ) {
+                        Ok(true) => last_black_timestamp = timestamp,
+                        Ok(false) => {}
+                        Err(message) => {
+                            let _ = stop_audio_pipeline(&mut audio_pipeline);
+                            return runtime_failure(message, &partial_path);
+                        }
+                    }
+                }
+                window_retry_at = Instant::now() + window_retry_delay;
+            }
+            Ok(Some(CaptureEvent::Closed)) => {
+                let _ = stop_capture(&mut active_capture);
+                let _ = stop_audio_pipeline(&mut audio_pipeline);
+                return runtime_failure(
+                    "Native monitor capture closed unexpectedly".to_string(),
+                    &partial_path,
+                );
+            }
+            Err(message) if is_window_capture => {
+                if let Err(error) = stop_capture(&mut active_capture) {
+                    tracing::debug!(backend = "native", "Window capture join returned: {error}");
+                }
+                update_window_warning(
+                    app_handle,
+                    &mut active_window_warning,
+                    Some(WINDOW_CAPTURE_UNAVAILABLE_WARNING),
+                );
+                tracing::warn!(backend = "native", "Window capture ended: {message}");
+                window_retry_at = Instant::now() + window_retry_delay;
+            }
+            Err(message) => {
+                let _ = stop_capture(&mut active_capture);
+                let _ = stop_audio_pipeline(&mut audio_pipeline);
+                return runtime_failure(message, &partial_path);
+            }
         }
 
         if let Some(message) = audio_pipeline
@@ -441,6 +568,96 @@ fn run_encoder_session(
         match stop_rx.try_recv() {
             Ok(()) | Err(mpsc::error::TryRecvError::Disconnected) => break,
             Err(mpsc::error::TryRecvError::Empty) => {}
+        }
+
+        if is_window_capture
+            && window_status_checked_at.elapsed() >= WINDOW_CAPTURE_STATUS_POLL_INTERVAL
+        {
+            window_status_checked_at = Instant::now();
+            let availability = evaluate_window_capture_availability(&session_config.capture_input);
+
+            if active_capture.is_some() && availability != WindowCaptureAvailability::Available {
+                if let Err(error) = stop_capture(&mut active_capture) {
+                    tracing::debug!(backend = "native", "Window capture stop returned: {error}");
+                }
+                update_window_warning(
+                    app_handle,
+                    &mut active_window_warning,
+                    warning_message_for_window_capture(availability)
+                        .or(Some(WINDOW_CAPTURE_UNAVAILABLE_WARNING)),
+                );
+                if let Ok(timestamp) = clock.now_100ns() {
+                    match send_black_frame(
+                        &encoder,
+                        &submission_lock,
+                        &timestamps,
+                        &black_frame,
+                        timestamp,
+                    ) {
+                        Ok(true) => last_black_timestamp = timestamp,
+                        Ok(false) => {}
+                        Err(message) => {
+                            let _ = stop_audio_pipeline(&mut audio_pipeline);
+                            return runtime_failure(message, &partial_path);
+                        }
+                    }
+                }
+                window_retry_at = Instant::now() + window_retry_delay;
+            } else if active_capture.is_none() {
+                let next_warning = if availability == WindowCaptureAvailability::Available {
+                    Some(WINDOW_CAPTURE_UNAVAILABLE_WARNING)
+                } else {
+                    warning_message_for_window_capture(availability)
+                        .or(Some(WINDOW_CAPTURE_UNAVAILABLE_WARNING))
+                };
+                update_window_warning(app_handle, &mut active_window_warning, next_warning);
+
+                if availability == WindowCaptureAvailability::Available
+                    && Instant::now() >= window_retry_at
+                {
+                    let start_result = resolve_window_capture_handle(&session_config.capture_input)
+                        .and_then(|window_hwnd| {
+                            start_window_capture(
+                                window_hwnd,
+                                capture_shared.clone(),
+                                session_config.frame_rate,
+                            )
+                            .map(|(control, event_rx)| (window_hwnd, control, event_rx))
+                        });
+                    match start_result {
+                        Ok((window_hwnd, control, event_rx)) => {
+                            if last_window_hwnd.is_some_and(|previous| previous != window_hwnd)
+                                && !recovered_hwnd_logged
+                            {
+                                tracing::info!(
+                                    backend = "native",
+                                    previous_hwnd = last_window_hwnd,
+                                    recovered_hwnd = window_hwnd,
+                                    "Recovered native window capture with a new HWND"
+                                );
+                                recovered_hwnd_logged = true;
+                            }
+                            last_window_hwnd = Some(window_hwnd);
+                            active_capture = Some(ActiveCapture {
+                                control,
+                                event_rx,
+                                stats: Arc::clone(&capture_stats),
+                            });
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                backend = "native",
+                                retry_delay_ms = window_retry_delay.as_millis(),
+                                "Native window capture retry failed: {error}"
+                            );
+                            window_retry_at = Instant::now() + window_retry_delay;
+                            window_retry_delay = window_retry_delay
+                                .saturating_mul(2)
+                                .min(Duration::from_secs(2));
+                        }
+                    }
+                }
+            }
         }
 
         match clock.now_100ns() {
@@ -473,13 +690,14 @@ fn run_encoder_session(
         thread::sleep(Duration::from_millis(25));
     }
 
+    let was_black_mode = is_window_capture && active_capture.is_none();
     let capture_stop_result = stop_capture(&mut active_capture);
     let audio_stop_result = stop_audio_pipeline(&mut audio_pipeline);
     if let Err(message) = capture_stop_result.and(audio_stop_result) {
         return runtime_failure(message, &partial_path);
     }
 
-    if matches!(&session_config.capture_input, CaptureInput::Window { .. }) {
+    if was_black_mode {
         if let Ok(timestamp) = clock.now_100ns() {
             if let Err(message) = send_black_frame(
                 &encoder,
@@ -603,6 +821,7 @@ mod tests {
         ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
         MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
     };
+    use windows_capture::window::Window;
 
     fn temporary_mp4_path(test_name: &str) -> std::path::PathBuf {
         let suffix = SystemTime::now()
@@ -648,7 +867,8 @@ mod tests {
         let (startup_tx, startup_rx) = tokio::sync::oneshot::channel();
         let mut startup_notifier = StartupNotifier::new(startup_tx);
 
-        let outcome = run_encoder_session(&session_config, &mut stop_rx, &mut startup_notifier);
+        let outcome =
+            run_encoder_session(None, &session_config, &mut stop_rx, &mut startup_notifier);
 
         assert!(matches!(
             outcome,
@@ -697,7 +917,8 @@ mod tests {
         let (startup_tx, startup_rx) = tokio::sync::oneshot::channel();
         let mut startup_notifier = StartupNotifier::new(startup_tx);
 
-        let outcome = run_encoder_session(&session_config, &mut stop_rx, &mut startup_notifier);
+        let outcome =
+            run_encoder_session(None, &session_config, &mut stop_rx, &mut startup_notifier);
 
         stop_thread
             .join()
@@ -710,6 +931,61 @@ mod tests {
             .is_ok_and(|metadata| metadata.len() > 0));
         fs::remove_file(output_path)
             .map_err(|error| format!("Failed to remove monitor test output: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires an interactive Windows desktop and Media Foundation H.264 support"]
+    fn native_window_capture_smoke() -> Result<(), String> {
+        let window = Window::foreground()
+            .map_err(|error| format!("Failed to resolve foreground window: {error}"))?;
+        let hwnd = window.as_raw_hwnd() as usize;
+        let width = u32::try_from(window.width().unwrap_or(1280).max(2))
+            .map_err(|error| format!("Invalid window width: {error}"))?;
+        let height = u32::try_from(window.height().unwrap_or(720).max(2))
+            .map_err(|error| format!("Invalid window height: {error}"))?;
+        let (width, height) =
+            super::super::window_capture::sanitize_capture_dimensions(width, height);
+        let output_path = temporary_mp4_path("native-window-capture-smoke");
+        let session_config = RecordingSessionConfig {
+            output_path: output_path.to_string_lossy().to_string(),
+            video_quality: "balanced".to_string(),
+            video_encoder_preference: "auto".to_string(),
+            frame_rate: 30,
+            bitrate: 3_000_000,
+            capture_input: super::super::model::CaptureInput::Window {
+                input_target: format!("hwnd={hwnd}"),
+                window_hwnd: Some(hwnd),
+                window_title: window.title().ok(),
+                use_wgc: true,
+            },
+            capture_width: width,
+            capture_height: height,
+            include_system_audio: false,
+            enable_diagnostics: false,
+        };
+        let (stop_tx, mut stop_rx) = tokio::sync::mpsc::channel(1);
+        let stop_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_secs(1));
+            stop_tx.blocking_send(())
+        });
+        let (startup_tx, startup_rx) = tokio::sync::oneshot::channel();
+        let mut startup_notifier = StartupNotifier::new(startup_tx);
+
+        let outcome =
+            run_encoder_session(None, &session_config, &mut stop_rx, &mut startup_notifier);
+
+        stop_thread
+            .join()
+            .map_err(|error| format!("Window test stop thread panicked: {error:?}"))?
+            .map_err(|error| format!("Failed to stop window test: {error}"))?;
+        assert!(matches!(startup_rx.blocking_recv(), Ok(Ok(()))));
+        assert!(matches!(outcome, RecordingRunOutcome::Finalized { .. }));
+        assert!(output_path
+            .metadata()
+            .is_ok_and(|metadata| metadata.len() > 0));
+        fs::remove_file(output_path)
+            .map_err(|error| format!("Failed to remove window test output: {error}"))?;
         Ok(())
     }
 

@@ -1,6 +1,6 @@
 //! Windows Graphics Capture integration for the native encoder.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -14,6 +14,7 @@ use windows_capture::settings::{
     ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
     MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
 };
+use windows_capture::window::Window;
 
 use super::timing::{FrameGate, QpcClock, TimestampReservation};
 
@@ -41,6 +42,8 @@ pub(super) struct CaptureShared {
     pub(super) output_width: u32,
     pub(super) output_height: u32,
     pub(super) enable_diagnostics: bool,
+    pub(super) dimension_warning_sent: Arc<AtomicBool>,
+    pub(super) diagnostic_delta_logged: Arc<AtomicBool>,
     pub(super) stats: Arc<CaptureStats>,
 }
 
@@ -53,8 +56,6 @@ pub(super) struct CaptureFlags {
 pub(super) struct NativeCaptureHandler {
     flags: CaptureFlags,
     first_frame_sent: bool,
-    dimension_warning_sent: bool,
-    clock_delta_logged: bool,
 }
 
 impl GraphicsCaptureApiHandler for NativeCaptureHandler {
@@ -65,8 +66,6 @@ impl GraphicsCaptureApiHandler for NativeCaptureHandler {
         Ok(Self {
             flags: context.flags,
             first_frame_sent: false,
-            dimension_warning_sent: false,
-            clock_delta_logged: false,
         })
     }
 
@@ -85,7 +84,13 @@ impl GraphicsCaptureApiHandler for NativeCaptureHandler {
             .map_err(|error| format!("Failed to read WGC frame timestamp: {error}"))?
             .Duration;
 
-        if !self.clock_delta_logged && self.flags.shared.enable_diagnostics {
+        if self.flags.shared.enable_diagnostics
+            && !self
+                .flags
+                .shared
+                .diagnostic_delta_logged
+                .swap(true, Ordering::Relaxed)
+        {
             if let Ok(now) = self.flags.shared.clock.now_100ns() {
                 tracing::info!(
                     backend = "native",
@@ -93,12 +98,15 @@ impl GraphicsCaptureApiHandler for NativeCaptureHandler {
                     "Observed initial WGC-to-QPC timestamp delta"
                 );
             }
-            self.clock_delta_logged = true;
         }
 
         if (frame.width() != self.flags.shared.output_width
             || frame.height() != self.flags.shared.output_height)
-            && !self.dimension_warning_sent
+            && !self
+                .flags
+                .shared
+                .dimension_warning_sent
+                .swap(true, Ordering::Relaxed)
         {
             tracing::warn!(
                 backend = "native",
@@ -108,7 +116,6 @@ impl GraphicsCaptureApiHandler for NativeCaptureHandler {
                 output_height = self.flags.shared.output_height,
                 "Native capture source dimensions changed; output remains fixed and may be padded or cropped"
             );
-            self.dimension_warning_sent = true;
         }
 
         let accepted_by_gate = self
@@ -226,5 +233,19 @@ pub(super) fn start_monitor_capture(
         monitor, shared, event_tx, frame_rate,
     ))
     .map_err(|error| format!("Failed to start native primary monitor capture: {error}"))?;
+    Ok((control, event_rx))
+}
+
+pub(super) fn start_window_capture(
+    window_hwnd: usize,
+    shared: CaptureShared,
+    frame_rate: u32,
+) -> Result<(NativeCaptureControl, mpsc::Receiver<CaptureEvent>), String> {
+    let window = Window::from_raw_hwnd(window_hwnd as *mut std::ffi::c_void);
+    let (event_tx, event_rx) = mpsc::channel();
+    let control = NativeCaptureHandler::start_free_threaded(capture_settings(
+        window, shared, event_tx, frame_rate,
+    ))
+    .map_err(|error| format!("Failed to start native window capture: {error}"))?;
     Ok((control, event_rx))
 }

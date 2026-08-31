@@ -10,9 +10,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use self::common::clear_recording_state;
 pub(crate) use self::common::StartupNotifier;
-use self::events::{
-    emit_recording_finalized, emit_recording_stopped, emit_recording_warning_cleared,
-};
+use self::events::{emit_recording_finalized, emit_recording_stopped};
+pub(crate) use self::events::{emit_recording_warning, emit_recording_warning_cleared};
 use self::ffmpeg::run_ffmpeg_recording_session;
 use super::backend::{
     initial_backend, requested_backend, should_fallback_to_ffmpeg, RecordingBackendKind,
