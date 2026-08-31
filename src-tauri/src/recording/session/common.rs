@@ -2,6 +2,8 @@ use std::io::Write;
 use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, Instant};
 
+use tokio::sync::oneshot;
+
 use super::super::model::{
     CaptureInput, RuntimeCaptureMode, SharedRecordingState, FFMPEG_MODE_SWITCH_TO_BLACK_TIMEOUT,
     FFMPEG_MODE_SWITCH_TO_WINDOW_TIMEOUT, FFMPEG_STOP_TIMEOUT,
@@ -26,6 +28,41 @@ pub(super) fn runtime_capture_label(runtime_capture_mode: RuntimeCaptureMode) ->
 pub(super) enum RequestedTransitionKind {
     ModeSwitchToBlack,
     ModeSwitchToWindow,
+}
+
+pub(crate) struct StartupNotifier {
+    sender: Option<oneshot::Sender<Result<(), String>>>,
+    acknowledged: bool,
+}
+
+impl StartupNotifier {
+    pub(crate) const fn new(sender: oneshot::Sender<Result<(), String>>) -> Self {
+        Self {
+            sender: Some(sender),
+            acknowledged: false,
+        }
+    }
+
+    pub(crate) const fn is_acknowledged(&self) -> bool {
+        self.acknowledged
+    }
+
+    pub(crate) fn notify_success(&mut self) {
+        self.acknowledged = true;
+        if let Some(sender) = self.sender.take() {
+            if sender.send(Ok(())).is_err() {
+                tracing::debug!("Recording startup receiver was dropped");
+            }
+        }
+    }
+
+    pub(crate) fn notify_error(&mut self, message: String) {
+        if let Some(sender) = self.sender.take() {
+            if sender.send(Err(message)).is_err() {
+                tracing::debug!("Recording startup receiver was dropped");
+            }
+        }
+    }
 }
 
 pub(super) fn clear_recording_state(state: &SharedRecordingState) {

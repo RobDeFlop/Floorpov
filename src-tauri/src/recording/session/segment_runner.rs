@@ -34,7 +34,7 @@ use super::super::window_capture::{
 };
 use super::common::{
     request_ffmpeg_graceful_stop, resolve_stop_timeout, runtime_capture_label,
-    signal_audio_threads_stop, RequestedTransitionKind,
+    signal_audio_threads_stop, RequestedTransitionKind, StartupNotifier,
 };
 use super::events::{emit_recording_warning, emit_recording_warning_cleared};
 
@@ -564,6 +564,7 @@ pub(super) fn run_ffmpeg_recording_segment(
     config: &SegmentConfig,
     capture_input: &mut CaptureInput,
     stop_rx: &mut mpsc::Receiver<()>,
+    startup_notifier: &mut StartupNotifier,
 ) -> SegmentRunResult {
     tracing::info!(
         ffmpeg_path = %config.ffmpeg_binary_path.display(),
@@ -705,6 +706,8 @@ pub(super) fn run_ffmpeg_recording_segment(
             return early_exit_result(SegmentTransition::Stop, segment_started_at);
         }
     };
+
+    startup_notifier.notify_success();
 
     if matches!(config.runtime_capture_mode, RuntimeCaptureMode::Window) {
         emit_recording_warning_cleared(app_handle);

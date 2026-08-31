@@ -1,5 +1,26 @@
 //! Native Windows recording backend.
 
+use tauri::AppHandle;
+use tokio::sync::mpsc;
+
+use super::backend::{RecordingBackendKind, RecordingFailurePhase, RecordingRunOutcome};
+use super::model::RecordingSessionConfig;
+use super::session::StartupNotifier;
+
+pub(crate) fn run_recording_session(
+    _app_handle: &AppHandle,
+    _session_config: &RecordingSessionConfig,
+    _stop_rx: &mut mpsc::Receiver<()>,
+    _startup_notifier: &mut StartupNotifier,
+) -> RecordingRunOutcome {
+    RecordingRunOutcome::Failed {
+        backend: RecordingBackendKind::NativeWindows,
+        phase: RecordingFailurePhase::Startup,
+        message: "The native recording backend is not implemented yet".to_string(),
+        startup_acknowledged: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;

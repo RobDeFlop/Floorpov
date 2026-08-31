@@ -1,4 +1,5 @@
 mod audio_pipeline;
+mod backend;
 mod ffmpeg;
 pub(crate) mod metadata;
 mod model;
@@ -44,21 +45,25 @@ pub fn list_capture_windows() -> Result<Vec<model::CaptureWindowInfo>, String> {
 pub fn get_available_video_encoders(
     app_handle: AppHandle,
 ) -> Result<Vec<model::AvailableVideoEncoder>, String> {
-    let ffmpeg_binary_path = ffmpeg::resolve_ffmpeg_binary_path(&app_handle)?;
+    let ffmpeg_binary_path = ffmpeg::resolve_ffmpeg_binary_path(&app_handle);
     let mut options = vec![model::AvailableVideoEncoder {
         value: "auto".to_string(),
-        label: "Auto (Recommended)".to_string(),
+        label: if ffmpeg_binary_path.is_ok() {
+            "Auto (Recommended)".to_string()
+        } else {
+            "Auto (Native Windows)".to_string()
+        },
     }];
 
-    let available_encoders = ffmpeg::list_available_video_encoders(&ffmpeg_binary_path);
-    options.extend(
-        available_encoders
-            .into_iter()
-            .map(|encoder| model::AvailableVideoEncoder {
+    if let Ok(ffmpeg_binary_path) = ffmpeg_binary_path {
+        let available_encoders = ffmpeg::list_available_video_encoders(&ffmpeg_binary_path);
+        options.extend(available_encoders.into_iter().map(|encoder| {
+            model::AvailableVideoEncoder {
                 label: ffmpeg::video_encoder_label(&encoder).to_string(),
                 value: encoder,
-            }),
-    );
+            }
+        }));
+    }
 
     Ok(options)
 }
@@ -124,7 +129,6 @@ pub async fn start_recording(
 
     recording_settings.bitrate = effective_bitrate;
     let output_frame_rate = recording_settings.frame_rate.max(1);
-    let ffmpeg_binary_path = ffmpeg::resolve_ffmpeg_binary_path(&app_handle)?;
     let resolved_capture_target = capture_input.target_label();
 
     if recording_settings.enable_system_audio {
@@ -132,7 +136,7 @@ pub async fn start_recording(
     }
 
     tracing::info!(
-        backend = "ffmpeg",
+        backend_request = ?backend::requested_backend(),
         video_quality = %recording_settings.video_quality,
         video_encoder_preference = %recording_settings.video_encoder_preference,
         requested_frame_rate = recording_settings.frame_rate,
@@ -159,29 +163,46 @@ pub async fn start_recording(
         recording_state.stop_tx = Some(stop_tx);
     }
 
-    session::spawn_ffmpeg_recording_task(
+    let startup_rx = session::spawn_recording_task(
         app_handle.clone(),
         state.inner().clone(),
         RecordingSessionConfig {
             output_path: output_path_str.clone(),
-            ffmpeg_binary_path,
             video_quality: recording_settings.video_quality.clone(),
             video_encoder_preference: recording_settings.video_encoder_preference.clone(),
-            requested_frame_rate: recording_settings.frame_rate,
-            output_frame_rate,
+            frame_rate: output_frame_rate,
             bitrate: recording_settings.bitrate,
             capture_input,
+            capture_width: width,
+            capture_height: height,
             include_system_audio: recording_settings.enable_system_audio,
             enable_diagnostics: recording_settings.enable_recording_diagnostics,
         },
         stop_rx,
     );
 
-    Ok(model::RecordingStartedPayload {
-        output_path: output_path_str,
-        width,
-        height,
-    })
+    match tokio::time::timeout(std::time::Duration::from_secs(20), startup_rx).await {
+        Ok(Ok(Ok(()))) => Ok(model::RecordingStartedPayload {
+            output_path: output_path_str,
+            width,
+            height,
+        }),
+        Ok(Ok(Err(message))) => Err(message),
+        Ok(Err(_)) => Err("Recording session ended before startup completed".to_string()),
+        Err(_) => {
+            let stop_tx = {
+                let mut recording_state = state.write().await;
+                recording_state.is_stopping = true;
+                recording_state.stop_tx.take()
+            };
+            if let Some(stop_tx) = stop_tx {
+                if let Err(error) = stop_tx.send(()).await {
+                    tracing::warn!("Failed to stop recording after startup timeout: {error}");
+                }
+            }
+            Err("Recording backend did not start within 20 seconds".to_string())
+        }
+    }
 }
 
 #[tauri::command]

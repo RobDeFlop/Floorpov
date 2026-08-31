@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
@@ -147,13 +146,13 @@ pub type SharedRecordingState = Arc<RwLock<RecordingState>>;
 
 pub(crate) struct RecordingSessionConfig {
     pub(crate) output_path: String,
-    pub(crate) ffmpeg_binary_path: PathBuf,
     pub(crate) video_quality: String,
     pub(crate) video_encoder_preference: String,
-    pub(crate) requested_frame_rate: u32,
-    pub(crate) output_frame_rate: u32,
+    pub(crate) frame_rate: u32,
     pub(crate) bitrate: u32,
     pub(crate) capture_input: CaptureInput,
+    pub(crate) capture_width: u32,
+    pub(crate) capture_height: u32,
     pub(crate) include_system_audio: bool,
     pub(crate) enable_diagnostics: bool,
 }
